@@ -12,11 +12,9 @@ from pydantic import AnyUrl
 from .services.docs import DocsIndex
 from .services.feature import FeatureResolver
 from .services.clarify import RequirementsClarifier
-from .prompts.templates import (
-    build_search_docs_prompt,
-    build_get_relevant_feature_prompt,
-    build_clarify_requirements_prompt,
-)
+from .tools.search_docs import SearchDocsTool
+from .tools.get_relevant_feature import GetRelevantFeatureTool
+from .tools.clarify_requirements import ClarifyRequirementsTool
 
 
 logger = logging.getLogger(__name__)
@@ -37,78 +35,35 @@ class CedarModularMCPServer:
         self.docs_index = DocsIndex(docs_path or os.getenv("CEDAR_DOCS_PATH"))
         self.feature_resolver = FeatureResolver(self.docs_index)
         self.requirements_clarifier = RequirementsClarifier()
+        # Initialize tool handlers
+        self.tool_handlers: Dict[str, Any] = {}
+        self._init_tools()
         self._setup_handlers()
+
+    def _init_tools(self) -> None:
+        """Instantiate tool handlers and register name → handler mapping."""
+        search_tool = SearchDocsTool(self.docs_index)
+        feature_tool = GetRelevantFeatureTool(self.feature_resolver)
+        clarify_tool = ClarifyRequirementsTool(self.requirements_clarifier)
+
+        self.tool_handlers = {
+            search_tool.name: search_tool,
+            feature_tool.name: feature_tool,
+            clarify_tool.name: clarify_tool,
+        }
 
     def _setup_handlers(self) -> None:
         @self.server.list_tools()
         async def handle_list_tools() -> List[types.Tool]:
-            return [
-                types.Tool(
-                    name="searchDocs",
-                    description="Search Cedar-OS documentation for relevant content",
-                    inputSchema={
-                        "type": "object",
-                        "properties": {
-                            "query": {"type": "string", "description": "Search query"},
-                            "limit": {"type": "number", "default": 5},
-                        },
-                        "required": ["query"],
-                    },
-                ),
-                types.Tool(
-                    name="getRelevantFeature",
-                    description="Identify relevant Cedar-OS feature(s) for a described goal",
-                    inputSchema={
-                        "type": "object",
-                        "properties": {
-                            "goal": {"type": "string", "description": "What the user wants to achieve"},
-                            "context": {"type": "string", "description": "Optional project/context details"},
-                        },
-                        "required": ["goal"],
-                    },
-                ),
-                types.Tool(
-                    name="clarifyRequirements",
-                    description="Suggest clarifying questions to better understand requirements",
-                    inputSchema={
-                        "type": "object",
-                        "properties": {
-                            "goal": {"type": "string"},
-                            "known_constraints": {"type": "array", "items": {"type": "string"}},
-                        },
-                        "required": ["goal"],
-                    },
-                ),
-            ]
+            return [handler.list_tool() for handler in self.tool_handlers.values()]
 
         @self.server.call_tool()
         async def handle_call_tool(name: str, arguments: Dict[str, Any]) -> List[types.TextContent]:
             try:
-                if name == "searchDocs":
-                    query: str = arguments.get("query", "")
-                    limit: int = int(arguments.get("limit", 5))
-                    prompt = build_search_docs_prompt(query)
-                    results = await self.docs_index.search(query, limit=limit)
-                    payload = {"prompt": prompt, "results": results}
-                    return [types.TextContent(type="text", text=json.dumps(payload, indent=2))]
-
-                if name == "getRelevantFeature":
-                    goal: str = arguments.get("goal", "")
-                    context: Optional[str] = arguments.get("context")
-                    prompt = build_get_relevant_feature_prompt(goal, context)
-                    mapping = await self.feature_resolver.map_goal_to_features(goal, context)
-                    payload = {"prompt": prompt, "features": mapping}
-                    return [types.TextContent(type="text", text=json.dumps(payload, indent=2))]
-
-                if name == "clarifyRequirements":
-                    goal: str = arguments.get("goal", "")
-                    known_constraints: List[str] = arguments.get("known_constraints", [])
-                    prompt = build_clarify_requirements_prompt(goal, known_constraints)
-                    questions = await self.requirements_clarifier.suggest_questions(goal, known_constraints)
-                    payload = {"prompt": prompt, "questions": questions}
-                    return [types.TextContent(type="text", text=json.dumps(payload, indent=2))]
-
-                raise ValueError(f"Unknown tool: {name}")
+                handler = self.tool_handlers.get(name)
+                if not handler:
+                    raise ValueError(f"Unknown tool: {name}")
+                return await handler.handle(arguments)
             except Exception as exc:
                 logger.exception("Tool execution error: %s", exc)
                 return [types.TextContent(type="text", text=json.dumps({"error": str(exc)}))]
