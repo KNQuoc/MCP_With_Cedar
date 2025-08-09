@@ -1,0 +1,32 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "cedar-agentic-mcp-server"
+version = "0.3.0"
+description = "Modular MCP Server for Cedar-OS docs search, feature mapping, and requirement clarification"
+authors = [
+    {name = "Cedar Intern", email = "intern@cedar.ai"}
+]
+dependencies = [
+    "mcp>=1.2.0",
+    "pydantic>=2.0.0",
+]
+requires-python = ">=3.10"
+readme = "README.md"
+keywords = ["mcp", "cedar", "agentic", "ai", "agent", "orchestration", "state-management"]
+
+[project.scripts]
+cedar-agentic-server = "cedar_mcp.server:cli"
+cedar-modular-mcp = "cedar_mcp.server:cli"
+
+[tool.hatch.build.targets.wheel]
+packages = ["cedar_mcp"]
+
+[tool.hatch.build.targets.sdist]
+include = [
+  "cedar_mcp",
+  "README.md",
+  "pyproject.toml"
+]
