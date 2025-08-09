@@ -30,32 +30,45 @@ class DocsIndex:
             self._load()
 
     def _load(self) -> None:
-        for path in self.docs_path.rglob("*"):
-            if path.is_file() and path.suffix.lower() in {".md", ".markdown", ".json"}:
-                try:
-                    if path.suffix.lower() == ".json":
-                        data = json.loads(path.read_text(encoding="utf-8"))
-                        # Expect list of {heading?, content}
-                        if isinstance(data, list):
-                            for item in data:
-                                self.chunks.append(
-                                    DocChunk(
-                                        source=str(path),
-                                        heading=item.get("heading"),
-                                        content=item.get("content", ""),
-                                    )
-                                )
-                    else:
-                        # Markdown: split by headings as a crude chunking
-                        text = path.read_text(encoding="utf-8")
-                        sections = self._split_markdown(text)
-                        for heading, content in sections:
+        """Load docs from a directory OR a single file path.
+
+        Supports .md/.markdown/.json and now .txt (treated as markdown-like text).
+        """
+        allowed = {".md", ".markdown", ".json", ".txt"}
+
+        def _load_entry(path: Path) -> None:
+            if not (path.is_file() and path.suffix.lower() in allowed):
+                return
+            try:
+                if path.suffix.lower() == ".json":
+                    data = json.loads(path.read_text(encoding="utf-8"))
+                    # Expect list of {heading?, content}
+                    if isinstance(data, list):
+                        for item in data:
                             self.chunks.append(
-                                DocChunk(source=str(path), heading=heading, content=content)
+                                DocChunk(
+                                    source=str(path),
+                                    heading=item.get("heading"),
+                                    content=item.get("content", ""),
+                                )
                             )
-                except Exception:
-                    # Skip unreadable/invalid files quietly for now
-                    continue
+                else:
+                    # Markdown or text: split by headings as a crude chunking
+                    text = path.read_text(encoding="utf-8")
+                    sections = self._split_markdown(text)
+                    for heading, content in sections:
+                        self.chunks.append(
+                            DocChunk(source=str(path), heading=heading, content=content)
+                        )
+            except Exception:
+                # Skip unreadable/invalid files quietly for now
+                return
+
+        if self.docs_path.is_file():
+            _load_entry(self.docs_path)
+            return
+        for path in self.docs_path.rglob("*"):
+            _load_entry(path)
 
     def _load_builtin_docs(self) -> None:
         """Load comprehensive Cedar-OS documentation based on actual docs.
@@ -534,8 +547,9 @@ class DocsIndex:
 
         def tokenize(text: str) -> List[str]:
             tokens = normalize(text).split(" ")
-            # Drop very short tokens to reduce noise
-            return [t for t in tokens if len(t) >= 3]
+            # Keep common short-but-meaningful tokens (ui, os, ai, llm, sse)
+            short_whitelist = {"ui", "os", "ai", "llm", "sse", "ux"}
+            return [t for t in tokens if len(t) >= 3 or t in short_whitelist]
 
         query_tokens = list(dict.fromkeys(tokenize(query)))  # unique, preserve order
         if not query_tokens:
@@ -550,9 +564,10 @@ class DocsIndex:
             token_hits: Dict[str, int] = {}
 
             for token in query_tokens:
-                # Count whole-word hits in heading and content
-                heading_hits = len(re.findall(rf"\b{re.escape(token)}\b", heading_text))
-                body_hits = len(re.findall(rf"\b{re.escape(token)}\b", body_text))
+                # Count token hits allowing simple suffix variants (e.g., tool/tools, agent/agents/agentic)
+                pattern = rf"\b{re.escape(token)}\w*\b"
+                heading_hits = len(re.findall(pattern, heading_text))
+                body_hits = len(re.findall(pattern, body_text))
                 token_total = heading_hits * 2 + body_hits  # heading gets a small boost
                 if token_total > 0:
                     token_hits[token] = token_total
