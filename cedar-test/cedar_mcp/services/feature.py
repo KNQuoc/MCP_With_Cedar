@@ -45,21 +45,8 @@ class FeatureResolver:
             if kw_hits > 0:
                 candidates.append({"feature": feat["key"], "name": feat["name"], "score": kw_hits})
 
-        # If none matched, do a docs search to infer probable features by tag occurrences
-        if not candidates and goal:
-            docs_hits = await self.docs_index.search(goal, limit=8)
-            tag_scores: Dict[str, int] = {f["key"]: 0 for f in CEDAR_FEATURES}
-            for hit in docs_hits:
-                content_l = (hit.get("content") or "").lower()
-                for feat in CEDAR_FEATURES:
-                    tag_scores[feat["key"]] += sum(tag in content_l for tag in feat["docs_tags"])  # type: ignore
-            for feat in CEDAR_FEATURES:
-                if tag_scores[feat["key"]] > 0:
-                    candidates.append({
-                        "feature": feat["key"],
-                        "name": feat["name"],
-                        "score": tag_scores[feat["key"]],
-                    })
+        # Note: Direct docs search removed - this should be done by calling SearchDocsTool externally
+        # and passing the results to this service if needed for tag-based scoring
 
         candidates.sort(key=lambda x: x["score"], reverse=True)
         return {"goal": goal, "context": context, "candidates": candidates[:5]}

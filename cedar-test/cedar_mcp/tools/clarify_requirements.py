@@ -6,6 +6,7 @@ from typing import Any, Dict, List
 from mcp.types import Tool as McpTool, TextContent
 
 from ..services.clarify import RequirementsClarifier
+from ..shared import CLARIFY_GUIDANCE
 
 
 class ClarifyRequirementsTool:
@@ -33,7 +34,8 @@ class ClarifyRequirementsTool:
         known_constraints: List[str] = arguments.get("known_constraints", [])
         prompt = self._build_prompt(goal, known_constraints)
         questions = await self.clarifier.suggest_questions(goal, known_constraints)
-        payload = {"prompt": prompt, "questions": questions}
+        checklist = self.clarifier.get_checklist()
+        payload: Dict[str, Any] = {"prompt": prompt, "guidance": CLARIFY_GUIDANCE, "questions": questions, "checklist": checklist}
         return [TextContent(type="text", text=json.dumps(payload, indent=2))]
 
     @staticmethod

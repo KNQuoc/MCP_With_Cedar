@@ -15,6 +15,10 @@ from .services.clarify import RequirementsClarifier
 from .tools.search_docs import SearchDocsTool
 from .tools.get_relevant_feature import GetRelevantFeatureTool
 from .tools.clarify_requirements import ClarifyRequirementsTool
+from .tools.confirm_requirements import ConfirmRequirementsTool
+from .services.wizard import IntegrationWizard
+from .tools.integration_wizard import IntegrationWizardTool
+from .shared import GROUNDING_CONFIG, DEFAULT_INSTALL_COMMAND
 
 
 logger = logging.getLogger(__name__)
@@ -32,9 +36,17 @@ class CedarModularMCPServer:
 
     def __init__(self, docs_path: Optional[str] = None) -> None:
         self.server = Server("cedar-modular-mcp")
-        self.docs_index = DocsIndex(docs_path or os.getenv("CEDAR_DOCS_PATH"))
+        # Prefer explicit arg, then env, then local bundled cedar_llms_full.txt
+        resolved_docs_path = (
+            docs_path
+            or os.getenv("CEDAR_DOCS_PATH")
+            or self._default_docs_path()
+        )
+        self.docs_index = DocsIndex(resolved_docs_path)
         self.feature_resolver = FeatureResolver(self.docs_index)
-        self.requirements_clarifier = RequirementsClarifier()
+        self.requirements_clarifier = RequirementsClarifier(self.docs_index)
+        # Gate: require confirmRequirements to pass before other tools
+        self._requirements_confirmed: bool = False
         # Initialize tool handlers
         self.tool_handlers: Dict[str, Any] = {}
         self._init_tools()
@@ -45,25 +57,102 @@ class CedarModularMCPServer:
         search_tool = SearchDocsTool(self.docs_index)
         feature_tool = GetRelevantFeatureTool(self.feature_resolver)
         clarify_tool = ClarifyRequirementsTool(self.requirements_clarifier)
+        confirm_tool = ConfirmRequirementsTool(self.requirements_clarifier)
+        wizard = IntegrationWizard(self.docs_index, self.requirements_clarifier)
+        wizard_tool = IntegrationWizardTool(wizard)
 
         self.tool_handlers = {
             search_tool.name: search_tool,
             feature_tool.name: feature_tool,
             clarify_tool.name: clarify_tool,
+            confirm_tool.name: confirm_tool,
+            wizard_tool.name_start: wizard_tool,
+            wizard_tool.name_answer: wizard_tool,
+            wizard_tool.name_state: wizard_tool,
+            wizard_tool.name_abort: wizard_tool,
         }
 
     def _setup_handlers(self) -> None:
         @self.server.list_tools()
         async def handle_list_tools() -> List[types.Tool]:
-            return [handler.list_tool() for handler in self.tool_handlers.values()]
+            tools: List[types.Tool] = []
+            seen: set[str] = set()
+            for handler in self.tool_handlers.values():
+                # Some handlers expose multiple tool names; guard duplicates
+                if hasattr(handler, "list_tools"):
+                    for t in handler.list_tools():
+                        if t.name not in seen:
+                            seen.add(t.name)
+                            tools.append(t)
+                elif hasattr(handler, "list_tool"):
+                    t = handler.list_tool()
+                    if t.name not in seen:
+                        seen.add(t.name)
+                        tools.append(t)
+            return tools
 
         @self.server.call_tool()
         async def handle_call_tool(name: str, arguments: Dict[str, Any]) -> List[types.TextContent]:
             try:
+                # Enforce requirements gate for all tools except clarify/confirm and the integration wizard/searchDocs
+                allowed_preconfirm = {
+                    "clarifyRequirements",
+                    "confirmRequirements",
+                    "startIntegrationWizard",
+                    "answerWizardQuestion",
+                    "getWizardState",
+                    "abortIntegrationWizard",
+                    "searchDocs",
+                }
+                if name not in allowed_preconfirm and not self._requirements_confirmed:
+                    message = {
+                        "error": "requirements_not_confirmed",
+                        "message": "Please run clarifyRequirements and then confirmRequirements before using other tools.",
+                        "required": [
+                            "clarifyRequirements(goal, known_constraints?)",
+                            "confirmRequirements({ provider_config, structured_outputs, docs_loaded, ... })",
+                        ],
+                        "grounding": GROUNDING_CONFIG,
+                        "installCommand": DEFAULT_INSTALL_COMMAND,
+                    }
+                    return [types.TextContent(type="text", text=json.dumps(message))]
+
                 handler = self.tool_handlers.get(name)
                 if not handler:
                     raise ValueError(f"Unknown tool: {name}")
-                return await handler.handle(arguments)
+                # Handlers that multiplex tools accept (name, arguments)
+                if hasattr(handler, "handle"):
+                    try:
+                        # Try (name, args) signature first
+                        result = await handler.handle(name, arguments)  # type: ignore
+                    except TypeError:
+                        result = await handler.handle(arguments)  # type: ignore
+                else:
+                    raise ValueError(f"Handler for {name} lacks handle()")
+
+                # Special-case: update gate flag on confirmRequirements
+                if name == "confirmRequirements":
+                    try:
+                        # The tool returns a single TextContent JSON payload
+                        payload = json.loads(result[0].text) if result and result[0].text else {}
+                        self._requirements_confirmed = bool(payload.get("satisfied"))
+                    except Exception:
+                        # Keep gate closed on parse issues
+                        self._requirements_confirmed = False
+
+                # If tool returns no citations and is docs-related, append a guard note
+                try:
+                    if name in {"searchDocs", "getRelevantFeature"}:
+                        enriched = []
+                        for item in result:
+                            payload = json.loads(item.text) if item.text else {}
+                            if not payload.get("results"):
+                                payload["note"] = payload.get("note") or "not in docs"
+                            enriched.append(types.TextContent(type="text", text=json.dumps(payload, indent=2)))
+                        return enriched
+                except Exception:
+                    pass
+                return result
             except Exception as exc:
                 logger.exception("Tool execution error: %s", exc)
                 return [types.TextContent(type="text", text=json.dumps({"error": str(exc)}))]
@@ -85,6 +174,16 @@ class CedarModularMCPServer:
                 meta = self.docs_index.describe()
                 return json.dumps(meta, indent=2)
             raise ValueError(f"Unknown resource: {uri}")
+
+    def _default_docs_path(self) -> Optional[str]:
+        """Resolve the bundled cedar_llms_full.txt as a default docs source."""
+        try:
+            here = os.path.dirname(os.path.abspath(__file__))
+            root = os.path.abspath(os.path.join(here, os.pardir))
+            candidate = os.path.join(root, "docs", "cedar_llms_full.txt")
+            return candidate if os.path.exists(candidate) else None
+        except Exception:
+            return None
 
 
 async def run_stdio_server(server: CedarModularMCPServer) -> None:
