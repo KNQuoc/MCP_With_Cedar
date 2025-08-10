@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional
 from mcp.types import Tool as McpTool, TextContent
 
 from ..services.feature import FeatureResolver
+from ..shared import DEFAULT_INSTALL_COMMAND
 
 
 class GetRelevantFeatureTool:
@@ -33,7 +34,14 @@ class GetRelevantFeatureTool:
         context: Optional[str] = arguments.get("context")
         prompt = self._build_prompt(goal, context)
         mapping = await self.feature_resolver.map_goal_to_features(goal, context)
-        payload = {"prompt": prompt, "features": mapping}
+        # Add grounding directive and require doc-backed citations via a follow-up search
+        directive = (
+            "Map the goal to Cedar-OS features strictly based on the docs index. "
+            "For each suggested feature, include supporting citations by calling searchDocs "
+            "with the feature name to verify presence. If none found, mark as 'not in docs'. "
+            f"Use '{DEFAULT_INSTALL_COMMAND}' as the default install command unless the user specifies another."
+        )
+        payload = {"prompt": prompt, "directive": directive, "features": mapping}
         return [TextContent(type="text", text=json.dumps(payload, indent=2))]
 
     @staticmethod

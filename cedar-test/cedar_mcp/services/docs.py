@@ -24,8 +24,9 @@ class DocsIndex:
     def __init__(self, docs_path: Optional[str]) -> None:
         self.docs_path = Path(docs_path) if docs_path else None
         self.chunks: List[DocChunk] = []
-        # Seed with curated built-in knowledge so the index is useful by default
-        self._load_builtin_docs()
+        # Keep original file contents for line-level citations
+        self._file_texts: Dict[str, str] = {}
+        # Only load from provided docs path (e.g., cedar_llms_full.txt)
         if self.docs_path and self.docs_path.exists():
             self._load()
 
@@ -55,6 +56,8 @@ class DocsIndex:
                 else:
                     # Markdown or text: split by headings as a crude chunking
                     text = path.read_text(encoding="utf-8")
+                    # Persist full file text for later line-level citation lookup
+                    self._file_texts[str(path)] = text
                     sections = self._split_markdown(text)
                     for heading, content in sections:
                         self.chunks.append(
@@ -80,435 +83,7 @@ class DocsIndex:
         - Agent Input Context (mentions, state subscription)
         - Agentic State and Actions
         """
-        builtin: List[DocChunk] = []
-
-        # Introduction / Overview
-        builtin.append(
-            DocChunk(
-                source="https://docs.cedarcopilot.com/introduction/overview",
-                heading="Introduction to Cedar-OS",
-                content=(
-                    "Cedar-OS is an open-source framework for building the next generation of AI native software. "
-                    "For the first time in history, products can come to life. Cedar helps you build something with life. "
-                    "Core philosophy: AI-native applications where AI agents can read and write application state, "
-                    "coordinate complex workflows, and provide seamless user experiences."
-                ),
-            )
-        )
-
-        builtin.append(
-            DocChunk(
-                source="https://docs.cedarcopilot.com/introduction/overview",
-                heading="Cedar-OS Core Features",
-                content=(
-                    "Core Features:\n"
-                    "- Streaming & Tool Calls: Real-time message streaming and agent tool execution\n"
-                    "- Voice Integration: Voice-powered agent interactions (capture, transcribe, synthesize)\n"
-                    "- State Access: Let agents read and write application state via centralized agentic state\n"
-                    "- Diff & History: Track what AI changes, allow user approvals, and manage history\n"
-                    "- Chat: Floating, SidePanel, Caption, or Embedded chat components\n"
-                    "- Spells: Powerful agent interactions and workflows\n"
-                    "- Mentions: Context-aware mention system for chat (@mentions)\n"
-                    "- Agent Connection Modules: Connect to various AI backends and services\n"
-                    "- Component Library: Pre-built UI components you own the code for, Shadcn style"
-                ),
-            )
-        )
-
-        # Getting Started - Real Installation Info
-        builtin.append(
-            DocChunk(
-                source="https://docs.cedarcopilot.com/getting-started/getting-started",
-                heading="Cedar-OS Installation",
-                content=(
-                    "Cedar-OS installation appears to use npm packages. Based on actual documentation, "
-                    "the framework provides React components and hooks. Key imports include:\n"
-                    "- FloatingCedarChat, ChatInput components\n"
-                    "- useMentionProvider, useRegisterState, useStateBasedMentionProvider hooks\n"
-                    "- Chat positioning options: floating (left/right), side panel, caption style\n"
-                    "Note: Exact package names need verification from official docs"
-                ),
-            )
-        )
-
-        builtin.append(
-            DocChunk(
-                source="https://docs.cedarcopilot.com/getting-started/getting-started",
-                heading="Basic Cedar-OS Setup Pattern",
-                content=(
-                    "Basic setup pattern from documentation:\n"
-                    "1. Import chat components: import { FloatingCedarChat } from '@/chatComponents/FloatingCedarChat'\n"
-                    "2. Configure chat with props: side, title, dimensions, resizable\n"
-                    "3. Set up mention providers using useMentionProvider hook\n"
-                    "4. Register application state with useRegisterState for agent access\n"
-                    "5. Configure streaming backend for real-time responses"
-                ),
-            )
-        )
-
-        # Chat Components - Real Documentation
-        builtin.append(
-            DocChunk(
-                source="https://docs.cedarcopilot.com/chat/chat-overview",
-                heading="Chat Component Types",
-                content=(
-                    "Cedar-OS provides multiple chat interface types:\n\n"
-                    "1. Caption Chat: A caption-style chat interface that appears at the bottom center "
-                    "of the screen, perfect for overlay-style interactions. Great for AI assistants that "
-                    "provide contextual help without taking up dedicated screen space. Realized that in "
-                    "conversation, you don't need to see entire history all the time, just the latest message.\n\n"
-                    "2. Floating Chat: A floating chat window that can be positioned on the left or right "
-                    "side of the screen with expand/collapse functionality. Perfect for assistance that "
-                    "doesn't interfere with the main application.\n\n"
-                    "3. Side Panel Chat: A side panel chat that pushes your main content to make room for "
-                    "the chat interface. This is if you want the chat to not overlap with any elements, "
-                    "and always have its own dedicated spot."
-                ),
-            )
-        )
-
-        builtin.append(
-            DocChunk(
-                source="https://docs.cedarcopilot.com/chat/chat-overview",
-                heading="FloatingCedarChat Component",
-                content=(
-                    "FloatingCedarChat component usage:\n\n"
-                    "import { FloatingCedarChat } from '@/chatComponents/FloatingCedarChat';\n\n"
-                    "function App() {\n"
-                    "  return (\n"
-                    "    <div>\n"
-                    "      {/* Your main content */}\n"
-                    "      <FloatingCedarChat\n"
-                    "        side='right'\n"
-                    "        title='Assistant'\n"
-                    "        collapsedLabel='How can I help you today?'\n"
-                    "        dimensions={{\n"
-                    "          width: 400,\n"
-                    "          height: 600,\n"
-                    "          minWidth: 350,\n"
-                    "          minHeight: 400,\n"
-                    "        }}\n"
-                    "        resizable={true}\n"
-                    "      />\n"
-                    "    </div>\n"
-                    "  );\n"
-                    "}\n\n"
-                    "Props: side ('left'|'right'), title, collapsedLabel, companyLogo, dimensions, resizable"
-                ),
-            )
-        )
-
-        # Streaming - Real Documentation
-        builtin.append(
-            DocChunk(
-                source="https://docs.cedarcopilot.com/chat/streaming",
-                heading="Cedar-OS Streaming Implementation",
-                content=(
-                    "Cedar-OS enables real-time streaming responses in chat components. "
-                    "You can disable streaming by setting stream={false} on any chat component or ChatInput.\n\n"
-                    "Cedar uses data-only SSE (Server-Sent Events) streams. The server sends data: messages "
-                    "over a single HTTP connection. The stream mixes plain text and structured JSON, sent as "
-                    "newline-delimited chunks prefixed with 'data:'.\n\n"
-                    "Under the hood, the server emits:\n"
-                    "- Text chunks for incremental message rendering\n"
-                    "- JSON objects for structured updates\n"
-                    "The client parses each data: line as it arrives and handles parsed text or JSON accordingly. "
-                    "This enables real-time, mixed-format updates with minimal overhead."
-                ),
-            )
-        )
-
-        builtin.append(
-            DocChunk(
-                source="https://docs.cedarcopilot.com/chat/streaming",
-                heading="Streaming Backend Requirements",
-                content=(
-                    "For proper SSE streaming in Cedar-OS:\n"
-                    "- Set Content-Type: text/event-stream header\n"
-                    "- Set Cache-Control: no-cache header\n"
-                    "- Send chunks prefixed with 'data: ' and terminated by double newlines\n"
-                    "- Flush responses periodically to avoid buffering\n"
-                    "- Handle client disconnects gracefully\n"
-                    "- Support both text chunks and JSON objects in the same stream\n"
-                    "- Implement proper error handling for stream interruptions"
-                ),
-            )
-        )
-
-        # Mentions - Comprehensive Real Documentation
-        builtin.append(
-            DocChunk(
-                source="https://docs.cedarcopilot.com/agent-input-context/mentions",
-                heading="Cedar-OS Mentions System",
-                content=(
-                    "Cedar-OS provides a comprehensive @ mentions system for contextual references in chat. "
-                    "The system allows users to reference application entities (users, tasks, files, etc.) "
-                    "using @ symbols, which then provide structured context to AI agents.\n\n"
-                    "Key components:\n"
-                    "- useMentionProvider: Register custom mention providers\n"
-                    "- useStateBasedMentionProvider: Auto-create mentions from application state\n"
-                    "- useRegisterState: Register application state for agent access\n"
-                    "- Multiple trigger characters: @, #, / for different entity types\n"
-                    "- Rich rendering: Custom UI for mention menus, editor items, and context badges"
-                ),
-            )
-        )
-
-        builtin.append(
-            DocChunk(
-                source="https://docs.cedarcopilot.com/agent-input-context/mentions",
-                heading="State-Based Mentions Implementation",
-                content=(
-                    "useStateBasedMentionProvider example:\n\n"
-                    "import { useState } from 'react';\n"
-                    "import { useRegisterState, useStateBasedMentionProvider } from 'cedar-os';\n\n"
-                    "function TodoApp() {\n"
-                    "  const [todos, setTodos] = useState([\n"
-                    "    { id: 1, text: 'Buy groceries', category: 'shopping' },\n"
-                    "    { id: 2, text: 'Call dentist', category: 'health' },\n"
-                    "  ]);\n\n"
-                    "  // Register the state\n"
-                    "  useRegisterState({\n"
-                    "    key: 'todos',\n"
-                    "    value: todos,\n"
-                    "    setValue: setTodos,\n"
-                    "    description: 'Todo items',\n"
-                    "  });\n\n"
-                    "  // Enable mentions for todos\n"
-                    "  useStateBasedMentionProvider({\n"
-                    "    stateKey: 'todos',\n"
-                    "    trigger: '@',\n"
-                    "    labelField: 'text',\n"
-                    "    searchFields: ['text', 'category'],\n"
-                    "    description: 'Todo items',\n"
-                    "    icon: '📝',\n"
-                    "    color: '#3b82f6',\n"
-                    "  });\n\n"
-                    "  return <ChatInput />;\n"
-                    "}"
-                ),
-            )
-        )
-
-        builtin.append(
-            DocChunk(
-                source="https://docs.cedarcopilot.com/agent-input-context/mentions",
-                heading="Custom Mention Providers",
-                content=(
-                    "useMentionProvider for custom entities:\n\n"
-                    "import { useMentionProvider } from 'cedar-os';\n\n"
-                    "function UserMentions() {\n"
-                    "  const users = [\n"
-                    "    { id: 1, name: 'Alice Johnson', email: 'alice@company.com', role: 'Designer' },\n"
-                    "    { id: 2, name: 'Bob Smith', email: 'bob@company.com', role: 'Developer' },\n"
-                    "  ];\n\n"
-                    "  useMentionProvider({\n"
-                    "    id: 'users',\n"
-                    "    trigger: '@',\n"
-                    "    label: 'Users',\n"
-                    "    description: 'Team members',\n"
-                    "    icon: '👤',\n"
-                    "    getItems: (query) => {\n"
-                    "      const filtered = query\n"
-                    "        ? users.filter(user =>\n"
-                    "            user.name.toLowerCase().includes(query.toLowerCase())\n"
-                    "          )\n"
-                    "        : users;\n"
-                    "      return filtered.map(user => ({\n"
-                    "        id: user.id.toString(),\n"
-                    "        label: `${user.name} (${user.role})`,\n"
-                    "        data: user,\n"
-                    "        metadata: { icon: '👤', color: '#10b981' },\n"
-                    "      }));\n"
-                    "    },\n"
-                    "    toContextEntry: (item) => ({\n"
-                    "      id: item.id,\n"
-                    "      source: 'mention',\n"
-                    "      data: item.data,\n"
-                    "      metadata: { label: item.label, icon: '👤', color: '#10b981' },\n"
-                    "    }),\n"
-                    "  });\n\n"
-                    "  return <ChatInput />;\n"
-                    "}"
-                ),
-            )
-        )
-
-        builtin.append(
-            DocChunk(
-                source="https://docs.cedarcopilot.com/agent-input-context/mentions",
-                heading="Multiple Mention Triggers",
-                content=(
-                    "Cedar-OS supports multiple mention triggers in the same chat:\n\n"
-                    "- @ for users: useMentionProvider with trigger: '@'\n"
-                    "- # for channels/topics: useMentionProvider with trigger: '#'\n"
-                    "- / for commands: useMentionProvider with trigger: '/'\n\n"
-                    "Each provider can have:\n"
-                    "- Custom getItems function for search and filtering\n"
-                    "- Custom renderMenuItem for mention menu display\n"
-                    "- Custom renderEditorItem for inline editor display\n"
-                    "- Custom renderContextBadge for context visualization\n"
-                    "- Async support for fetching items from APIs\n"
-                    "- Rich metadata and validation"
-                ),
-            )
-        )
-
-        builtin.append(
-            DocChunk(
-                source="https://docs.cedarcopilot.com/agent-input-context/mentions",
-                heading="Mention Context for Agents",
-                content=(
-                    "When users include mentions in their messages, agents receive structured context:\n\n"
-                    "Example: User types 'Update the status of @task-123 to completed'\n"
-                    "Agent receives:\n"
-                    "{\n"
-                    "  message: 'Update the status of @task-123 to completed',\n"
-                    "  mentions: [\n"
-                    "    {\n"
-                    "      id: 'task-123',\n"
-                    "      type: 'tasks',\n"
-                    "      data: {\n"
-                    "        id: 'task-123',\n"
-                    "        title: 'Implement user authentication',\n"
-                    "        status: 'in-progress',\n"
-                    "        assignee: 'Alice'\n"
-                    "      },\n"
-                    "      position: { start: 23, end: 32 }\n"
-                    "    }\n"
-                    "  ]\n"
-                    "}\n\n"
-                    "This allows agents to have full context about referenced entities."
-                ),
-            )
-        )
-
-        # Agent Input Context
-        builtin.append(
-            DocChunk(
-                source="https://docs.cedarcopilot.com/agent-input-context/agent-input-context",
-                heading="Agent Input Context System",
-                content=(
-                    "Cedar-OS provides comprehensive agent input context to ground AI behavior. "
-                    "The system allows agents to access application state, user context, and UI state "
-                    "automatically or on-demand.\n\n"
-                    "Key patterns:\n"
-                    "- Keep context minimal but sufficient; prefer references over large data blobs\n"
-                    "- Use stable identifiers for entities referenced in chat\n"
-                    "- Sanitize PII and sensitive fields before sending to agents\n"
-                    "- Provide fallbacks when state is incomplete or stale\n"
-                    "- Support both reactive subscriptions and explicit context inclusion"
-                ),
-            )
-        )
-
-        builtin.append(
-            DocChunk(
-                source="https://docs.cedarcopilot.com/agent-input-context/subscribing-state-to-input",
-                heading="State Subscription for Agents",
-                content=(
-                    "Cedar-OS allows subscribing parts of application state so they are automatically "
-                    "included in prompts to keep context fresh and reactive.\n\n"
-                    "Best practices for state subscription:\n"
-                    "- Limit subscriptions to relevant slices to control token usage\n"
-                    "- Debounce updates or batch to avoid excessive prompt churn\n"
-                    "- Provide fallbacks when state is incomplete or stale\n"
-                    "- Use fine-grained subscriptions rather than subscribing to entire state trees\n"
-                    "- Consider privacy and security when auto-including state in prompts"
-                ),
-            )
-        )
-
-        # Agentic State
-        builtin.append(
-            DocChunk(
-                source="https://docs.cedarcopilot.com/agentic-state/agentic-state",
-                heading="Cedar-OS Agentic State",
-                content=(
-                    "Cedar-OS provides centralized, reactive state management specifically designed for "
-                    "AI agents, workflows, and user context. The agentic state system supports coordination, "
-                    "persistence, and fine-grained subscriptions across the application.\n\n"
-                    "Core agentic state model:\n"
-                    "- Partitions: agent-specific, workflow-specific, and global context\n"
-                    "- Subscriptions: fine-grained listeners for reactive updates\n"
-                    "- Persistence: optional durability across sessions\n"
-                    "- Coordination: enables multi-agent workflows with shared context\n"
-                    "- Access Control: permissions and validation for state modifications"
-                ),
-            )
-        )
-
-        builtin.append(
-            DocChunk(
-                source="https://docs.cedarcopilot.com/agentic-state/agentic-actions",
-                heading="Cedar-OS Agentic Actions",
-                content=(
-                    "Agentic Actions in Cedar-OS trigger and track domain actions, workflows, and "
-                    "multi-step tasks initiated by agents or users. Useful for orchestrating multiple "
-                    "specialized agents working together.\n\n"
-                    "Agentic Actions lifecycle:\n"
-                    "- Created → Running → Succeeded/Failed (with retries and timeouts as needed)\n"
-                    "- Emit progress updates for UI and orchestration\n"
-                    "- Log inputs/outputs for auditability\n"
-                    "- Support cancellation and rollback where appropriate\n"
-                    "- Enable coordination between multiple agents on complex tasks"
-                ),
-            )
-        )
-
-        builtin.append(
-            DocChunk(
-                source="https://docs.cedarcopilot.com/agentic-state/diff-and-history-manager",
-                heading="Diff & History Manager (Beta)",
-                content=(
-                    "Cedar-OS Diff & History Manager tracks changes proposed/made by agents, shows diffs "
-                    "for user approval, and maintains modification history to support auditing and undo/redo flows.\n\n"
-                    "Diff approval flows:\n"
-                    "- Present proposed changes for review with clear diffs\n"
-                    "- Allow accept/reject/partial-apply where supported\n"
-                    "- Keep an immutable history for compliance and rollback\n"
-                    "- Support collaborative editing with conflict resolution\n"
-                    "- Provide audit trails for all agent-initiated changes"
-                ),
-            )
-        )
-
-        # Architecture and Advanced Topics
-        builtin.append(
-            DocChunk(
-                source="https://docs.cedarcopilot.com/architecture",
-                heading="Cedar-OS Architecture Overview",
-                content=(
-                    "Cedar-OS is built with a component-based architecture optimized for AI-native applications:\n\n"
-                    "- Component Layer: React components with AI-aware hooks and state management\n"
-                    "- State Layer: Centralized agentic state with fine-grained reactivity\n"
-                    "- Agent Layer: AI agent coordination and workflow orchestration\n"
-                    "- Integration Layer: Backends, APIs, and external service connections\n"
-                    "- UI Layer: Flexible chat interfaces and interaction patterns\n\n"
-                    "The architecture separates concerns while enabling deep integration between "
-                    "AI agents and application state, creating truly AI-native user experiences."
-                ),
-            )
-        )
-
-        builtin.append(
-            DocChunk(
-                source="https://docs.cedarcopilot.com/getting-started/connecting-to-an-agent",
-                heading="Agent Backend Connection",
-                content=(
-                    "Cedar-OS connects to AI backends through Agent Connection Modules. The system "
-                    "supports various AI providers and frameworks:\n\n"
-                    "- Direct integration with language model APIs (OpenAI, Anthropic, etc.)\n"
-                    "- Mastra framework integration for advanced workflows\n"
-                    "- Custom backend implementations\n"
-                    "- Streaming response support with SSE\n"
-                    "- Tool calling and function execution\n"
-                    "- Multi-agent coordination and handoffs"
-                ),
-            )
-        )
-
-        self.chunks.extend(builtin)
+        return  # disabled; rely solely on external cedar_llms_full.txt
 
     @staticmethod
     def _split_markdown(text: str) -> List[Tuple[Optional[str], str]]:
@@ -582,19 +157,85 @@ class DocsIndex:
 
         results: List[Dict[str, Any]] = []
         for score, c, token_hits in top:
-            results.append({
+            entry: Dict[str, Any] = {
                 "source": c.source,
                 "heading": c.heading,
                 "content": c.content[:2000],  # truncate for payload size
                 "matchCount": int(score),
                 "matchedTokens": token_hits,
-            })
+            }
+            # Add best-effort line-level citations when the source is a local file we loaded
+            if c.source and c.source.startswith("/") and c.source in self._file_texts and token_hits:
+                file_text = self._file_texts[c.source]
+                token_line_map: Dict[str, List[int]] = {}
+                all_lines: List[int] = []
+                for token in token_hits.keys():
+                    lines_for_token = self._find_token_lines(file_text, token)
+                    if lines_for_token:
+                        token_line_map[token] = lines_for_token[:10]  # cap per token
+                        all_lines.extend(lines_for_token)
+                if all_lines:
+                    entry["citations"] = {
+                        "source": c.source,
+                        "approxSpan": {
+                            "start": min(all_lines),
+                            "end": max(all_lines),
+                        },
+                        "tokenLines": token_line_map,
+                    }
+            results.append(entry)
         return results
+
+    @staticmethod
+    def _compute_line_number_index(text: str) -> List[int]:
+        """Return cumulative character offsets at the start of each 1-based line.
+
+        This enables fast char-index → line-number conversions.
+        """
+        offsets = [0]
+        running = 0
+        for part in text.splitlines(keepends=True):
+            running += len(part)
+            offsets.append(running)
+        return offsets
+
+    @staticmethod
+    def _char_index_to_line(offsets: List[int], index: int) -> int:
+        # Binary search for the greatest offset <= index
+        lo, hi = 0, len(offsets) - 1
+        while lo <= hi:
+            mid = (lo + hi) // 2
+            if offsets[mid] <= index:
+                lo = mid + 1
+            else:
+                hi = mid - 1
+        return max(1, hi + 1)  # Convert to 1-based line number
+
+    def _find_token_lines(self, text: str, token: str) -> List[int]:
+        """Find 1-based line numbers for a token (word-boundary, case-insensitive)."""
+        try:
+            pattern = re.compile(rf"\b{re.escape(token)}\w*\b", re.IGNORECASE)
+            offsets = self._compute_line_number_index(text)
+            lines: List[int] = []
+            for match in pattern.finditer(text):
+                start_idx = match.start()
+                line_num = self._char_index_to_line(offsets, start_idx)
+                lines.append(line_num)
+            # Deduplicate while preserving order
+            seen = set()
+            unique_lines: List[int] = []
+            for ln in lines:
+                if ln not in seen:
+                    seen.add(ln)
+                    unique_lines.append(ln)
+            return unique_lines
+        except Exception:
+            return []
 
     def describe(self) -> Dict[str, Any]:
         return {
             "docs_path": str(self.docs_path) if self.docs_path else None,
             "num_chunks": len(self.chunks),
             "sources": sorted({Path(c.source).name if c.source.startswith("/") else c.source for c in self.chunks}),
-            "has_builtin": True,
+            "has_builtin": False,
         }
