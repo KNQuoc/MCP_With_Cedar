@@ -18,12 +18,13 @@ class SearchDocsTool:
     def list_tool(self) -> McpTool:
         return McpTool(
             name=self.name,
-            description="Search Cedar-OS documentation for relevant content",
+            description="Search Cedar-OS documentation using semantic search (if available) or keyword search",
             inputSchema={
                 "type": "object",
                 "properties": {
                     "query": {"type": "string", "description": "Search query"},
                     "limit": {"type": "number", "default": 5},
+                    "use_semantic": {"type": "boolean", "default": True, "description": "Use semantic search if available"},
                 },
                 "required": ["query"],
             },
@@ -32,8 +33,9 @@ class SearchDocsTool:
     async def handle(self, arguments: Dict[str, Any]) -> List[TextContent]:
         query: str = arguments.get("query", "")
         limit: int = int(arguments.get("limit", 5))
-        prompt = self._build_prompt(query)
-        results = await self.docs_index.search(query, limit=limit)
+        use_semantic: bool = arguments.get("use_semantic", True)
+        prompt = self._build_prompt(query, use_semantic)
+        results = await self.docs_index.search(query, limit=limit, use_semantic=use_semantic)
         # Enforce evidence-based response: if no results, explicitly say so
         if not results:
             payload = {
@@ -47,10 +49,11 @@ class SearchDocsTool:
         return [TextContent(type="text", text=json.dumps(payload, indent=2))]
 
     @staticmethod
-    def _build_prompt(query: str) -> str:
+    def _build_prompt(query: str, use_semantic: bool = True) -> str:
+        search_type = "semantic similarity" if use_semantic else "keyword"
         return (
-            "Search the Cedar-OS documentation for the query and return the most relevant "
-            f"sections from cedar-test/docs/cedar_llms_full.txt with citations: '{query}'. "
+            f"Search the Cedar-OS documentation using {search_type} search for the query and return the most relevant "
+            f"sections with citations: '{query}'. "
             "If nothing matches, return no results so the caller can respond 'not in docs'."
         )
 
