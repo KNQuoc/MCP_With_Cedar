@@ -4,10 +4,14 @@ import logging
 import os
 from typing import List, Dict, Any, Optional
 
+from dotenv import load_dotenv
 from mcp.server import Server
 import mcp.server.stdio
 import mcp.types as types
 from pydantic import AnyUrl
+
+# Load environment variables from .env file
+load_dotenv()
 
 from .services.docs import DocsIndex
 from .services.feature import FeatureResolver
@@ -42,7 +46,9 @@ class CedarModularMCPServer:
             or os.getenv("CEDAR_DOCS_PATH")
             or self._default_docs_path()
         )
-        self.docs_index = DocsIndex(resolved_docs_path)
+        # Enable semantic search if Supabase credentials are available
+        enable_semantic = bool(os.getenv("SUPABASE_URL") and os.getenv("SUPABASE_KEY"))
+        self.docs_index = DocsIndex(resolved_docs_path, enable_semantic_search=enable_semantic)
         self.feature_resolver = FeatureResolver(self.docs_index)
         self.requirements_clarifier = RequirementsClarifier(self.docs_index)
         # Gate: require confirmRequirements to pass before other tools

@@ -1,9 +1,13 @@
 import json
 import os
+import logging
 from dataclasses import dataclass
 import re
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Tuple
+from .semantic_search import SemanticSearchService, SemanticSearchResult
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -21,11 +25,18 @@ class DocsIndex:
     with a vector index without changing the MCP server surface.
     """
 
-    def __init__(self, docs_path: Optional[str]) -> None:
+    def __init__(self, docs_path: Optional[str], enable_semantic_search: bool = False) -> None:
         self.docs_path = Path(docs_path) if docs_path else None
         self.chunks: List[DocChunk] = []
         # Keep original file contents for line-level citations
         self._file_texts: Dict[str, str] = {}
+        # Initialize semantic search if enabled and credentials are available
+        self.semantic_search: Optional[SemanticSearchService] = None
+        if enable_semantic_search:
+            try:
+                self.semantic_search = SemanticSearchService()
+            except ValueError as e:
+                logger.info(f"Semantic search not available: {e}")
         # Only load from provided docs path (e.g., cedar_llms_full.txt)
         if self.docs_path and self.docs_path.exists():
             self._load()
@@ -103,16 +114,42 @@ class DocsIndex:
             sections.append((current_heading, buffer))
         return [(h, "\n".join(b).strip()) for h, b in sections]
 
-    async def search(self, query: str, limit: int = 5) -> List[Dict[str, Any]]:
-        """Keyword-based search over built-in and optional local docs.
+    async def search(self, query: str, limit: int = 5, use_semantic: bool = True) -> List[Dict[str, Any]]:
+        """Search over docs using semantic search if available, otherwise keyword-based search.
 
         Previous implementation required the full query string to appear verbatim
         inside a doc chunk, which often returned zero results for long queries.
         This version tokenizes the query and scores chunks by keyword matches,
         with a small boost for heading matches.
+        
+        If semantic search is enabled and available, it will be used first.
         """
         if not query:
             return []
+        
+        # Try semantic search first if available and enabled
+        if use_semantic and self.semantic_search:
+            try:
+                semantic_results = await self.semantic_search.search_by_vector(
+                    query=query,
+                    limit=limit
+                )
+                
+                if semantic_results:
+                    # Convert semantic results to the expected format
+                    results = []
+                    for sr in semantic_results:
+                        entry = {
+                            "source": sr.source or "supabase",
+                            "heading": sr.metadata.get("heading"),
+                            "content": sr.content[:2000],  # truncate for payload size
+                            "similarity": sr.similarity,
+                            "metadata": sr.metadata
+                        }
+                        results.append(entry)
+                    return results
+            except Exception as e:
+                logger.debug(f"Semantic search failed, falling back to keyword search: {e}")
 
         def normalize(text: str) -> str:
             # Lowercase and replace non-alphanumeric with spaces, then collapse whitespace
