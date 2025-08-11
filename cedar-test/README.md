@@ -28,7 +28,49 @@ python -m cedar_mcp
 cedar-modular-mcp
 ```
 
-- Cursor integration (`~/.cursor/mcp.json`):
+### IDE Integration
+
+#### Claude Code Integration
+
+**Option 1: Global Installation (available in all projects)**
+```bash
+# Install globally for all Claude Code sessions
+claude mcp add cedar --scope user python -- -m cedar_mcp
+
+# Verify installation
+claude mcp list
+```
+
+**Option 2: Project-Specific Installation**
+```bash
+# Install only for current project
+claude mcp add cedar --scope project python -- -m cedar_mcp
+
+# This creates a .mcp.json file in your project root
+```
+
+**Option 3: Manual Configuration**
+Add to `~/.claude.json` (global) or `.mcp.json` (project):
+```json
+{
+  "mcpServers": {
+    "cedar": {
+      "type": "stdio",
+      "command": "python",
+      "args": ["-m", "cedar_mcp"],
+      "env": {
+        "CEDAR_LOG_LEVEL": "info",
+        "CEDAR_DOCS_PATH": "/path/to/local/docs"
+      }
+    }
+  }
+}
+```
+
+After configuration, restart Claude Code. The Cedar MCP server will start automatically.
+
+#### Cursor Integration
+Add to `~/.cursor/mcp.json`:
 ```json
 {
   "mcpServers": {
