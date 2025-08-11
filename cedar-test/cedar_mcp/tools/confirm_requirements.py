@@ -6,7 +6,7 @@ from typing import Any, Dict, List
 from mcp.types import Tool as McpTool, TextContent
 
 from ..services.clarify import RequirementsClarifier
-from ..shared import GROUNDING_CONFIG
+from ..shared import GROUNDING_CONFIG, build_implementation_plan
 
 
 class ConfirmRequirementsTool:
@@ -48,10 +48,21 @@ class ConfirmRequirementsTool:
             return [TextContent(type="text", text=json.dumps(payload, indent=2))]
 
         validation = self.clarifier.validate_confirmations(confirmations)
-        payload = {
-            **validation,
-            "grounding": GROUNDING_CONFIG,
-        }
+        
+        # If requirements are satisfied, generate implementation plan
+        if validation.get("satisfied"):
+            plan = build_implementation_plan(confirmations)
+            payload = {
+                **validation,
+                "plan": plan,
+                "grounding": GROUNDING_CONFIG,
+            }
+        else:
+            payload = {
+                **validation,
+                "grounding": GROUNDING_CONFIG,
+            }
+        
         return [TextContent(type="text", text=json.dumps(payload, indent=2))]
 
 

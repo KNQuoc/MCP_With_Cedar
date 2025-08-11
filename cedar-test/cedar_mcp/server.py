@@ -16,8 +16,7 @@ from .tools.search_docs import SearchDocsTool
 from .tools.get_relevant_feature import GetRelevantFeatureTool
 from .tools.clarify_requirements import ClarifyRequirementsTool
 from .tools.confirm_requirements import ConfirmRequirementsTool
-from .services.wizard import IntegrationWizard
-from .tools.integration_wizard import IntegrationWizardTool
+from .tools.check_install import CheckInstallTool
 from .shared import GROUNDING_CONFIG, DEFAULT_INSTALL_COMMAND
 
 
@@ -28,7 +27,8 @@ class CedarModularMCPServer:
     """MCP Server exposing modular tools:
     - searchDocs: query Cedar-OS docs
     - getRelevantFeature: map a user goal to relevant Cedar features
-    - clarifyRequirements: ask clarifying questions
+    - clarifyRequirements: comprehensive structured requirement gathering
+    - confirmRequirements: validate requirements and generate implementation plan
 
     Prompts and execution are separated. Services perform execution;
     prompts build structured content used by those services.
@@ -58,18 +58,14 @@ class CedarModularMCPServer:
         feature_tool = GetRelevantFeatureTool(self.feature_resolver)
         clarify_tool = ClarifyRequirementsTool(self.requirements_clarifier)
         confirm_tool = ConfirmRequirementsTool(self.requirements_clarifier)
-        wizard = IntegrationWizard(self.docs_index, self.requirements_clarifier)
-        wizard_tool = IntegrationWizardTool(wizard)
+        check_install_tool = CheckInstallTool()
 
         self.tool_handlers = {
             search_tool.name: search_tool,
             feature_tool.name: feature_tool,
             clarify_tool.name: clarify_tool,
             confirm_tool.name: confirm_tool,
-            wizard_tool.name_start: wizard_tool,
-            wizard_tool.name_answer: wizard_tool,
-            wizard_tool.name_state: wizard_tool,
-            wizard_tool.name_abort: wizard_tool,
+            check_install_tool.name: check_install_tool,
         }
 
     def _setup_handlers(self) -> None:
@@ -94,26 +90,27 @@ class CedarModularMCPServer:
         @self.server.call_tool()
         async def handle_call_tool(name: str, arguments: Dict[str, Any]) -> List[types.TextContent]:
             try:
-                # Enforce requirements gate for all tools except clarify/confirm and the integration wizard/searchDocs
+                # Enforce requirements gate for all tools except clarify/confirm, checkInstall, and the integration wizard/searchDocs
                 allowed_preconfirm = {
                     "clarifyRequirements",
                     "confirmRequirements",
-                    "startIntegrationWizard",
-                    "answerWizardQuestion",
-                    "getWizardState",
-                    "abortIntegrationWizard",
                     "searchDocs",
+                    "checkInstall",  # Always allow install checking
                 }
                 if name not in allowed_preconfirm and not self._requirements_confirmed:
                     message = {
                         "error": "requirements_not_confirmed",
-                        "message": "Please run clarifyRequirements and then confirmRequirements before using other tools.",
+                        "message": "Please run checkInstall FIRST, then clarifyRequirements and confirmRequirements before using other tools.",
                         "required": [
+                            "checkInstall(context='starting Cedar integration') - ALWAYS DO THIS FIRST",
                             "clarifyRequirements(goal, known_constraints?)",
                             "confirmRequirements({ provider_config, structured_outputs, docs_loaded, ... })",
                         ],
                         "grounding": GROUNDING_CONFIG,
                         "installCommand": DEFAULT_INSTALL_COMMAND,
+                        "installCommandNote": "NEVER use 'npm install' for any Cedar packages. ONLY use the plant-seed CLI commands.",
+                        "errorHandling": "For ANY Cedar-related errors, ALWAYS call searchDocs first to find the solution.",
+                        "criticalRule": "ALWAYS call checkInstall FIRST when starting Cedar work to install the CLI",
                     }
                     return [types.TextContent(type="text", text=json.dumps(message))]
 
@@ -158,7 +155,7 @@ class CedarModularMCPServer:
                 return [types.TextContent(type="text", text=json.dumps({"error": str(exc)}))]
 
         @self.server.list_resources()
-        async def handle_list_resources() -> List[types.Resource]:
+        async def handle_list_resources() -> List[types.Resource]:  # type: ignore
             return [
                 types.Resource(
                     uri=AnyUrl("cedar://docs"),
@@ -169,7 +166,7 @@ class CedarModularMCPServer:
             ]
 
         @self.server.read_resource()
-        async def handle_read_resource(uri: AnyUrl) -> str:
+        async def handle_read_resource(uri: AnyUrl) -> str:  # type: ignore
             if str(uri) == "cedar://docs":
                 meta = self.docs_index.describe()
                 return json.dumps(meta, indent=2)

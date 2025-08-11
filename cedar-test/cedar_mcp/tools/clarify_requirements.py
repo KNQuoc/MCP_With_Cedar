@@ -6,7 +6,7 @@ from typing import Any, Dict, List
 from mcp.types import Tool as McpTool, TextContent
 
 from ..services.clarify import RequirementsClarifier
-from ..shared import CLARIFY_GUIDANCE
+from ..shared import CLARIFY_GUIDANCE, SETUP_QUESTIONS, FEATURE_QUESTIONS
 
 
 class ClarifyRequirementsTool:
@@ -33,9 +33,29 @@ class ClarifyRequirementsTool:
         goal: str = arguments.get("goal", "")
         known_constraints: List[str] = arguments.get("known_constraints", [])
         prompt = self._build_prompt(goal, known_constraints)
-        questions = await self.clarifier.suggest_questions(goal, known_constraints)
+        
+        # Get initial clarifying questions from service
+        clarify_questions = await self.clarifier.suggest_questions(goal, known_constraints)
+        
+        # Build comprehensive question set combining clarifying + structured questions
+        all_questions = {
+            "clarifying": clarify_questions,
+            "setup": [q["text"] for q in SETUP_QUESTIONS],
+            "features": [q["text"] for q in FEATURE_QUESTIONS],
+        }
+        
+        # Build comprehensive checklist including structured question IDs
         checklist = self.clarifier.get_checklist()
-        payload: Dict[str, Any] = {"prompt": prompt, "guidance": CLARIFY_GUIDANCE, "questions": questions, "checklist": checklist}
+        for q in SETUP_QUESTIONS + FEATURE_QUESTIONS:
+            checklist[q["id"]] = False
+            
+        payload: Dict[str, Any] = {
+            "prompt": prompt,
+            "guidance": CLARIFY_GUIDANCE,
+            "questions": all_questions,
+            "checklist": checklist,
+            "structured_questions": SETUP_QUESTIONS + FEATURE_QUESTIONS,
+        }
         return [TextContent(type="text", text=json.dumps(payload, indent=2))]
 
     @staticmethod
