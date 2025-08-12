@@ -1,5 +1,5 @@
 Source: https://docs.cedarcopilot.com/llms-full.txt
-Fetched: 2025-08-09T22:48:22.047783+00:00
+Fetched: 2025-08-12T02:32:40.879564+00:00
 ETag: None
 Last-Modified: None
 # Agent Backend Connection
@@ -448,6 +448,8 @@ When designing agentic workflows, the best practice for working with Cedar-OS is
 
   interface MastraParams extends BaseParams {
   	route: string;
+  	resourceId?: string; // User ID in Cedar
+  	threadId?: string;
   }
 
   // Example usage
@@ -518,6 +520,8 @@ When designing agentic workflows, the best practice for working with Cedar-OS is
   	useTypedAgentConnection('custom');
 
   interface CustomParams extends BaseParams {
+  	userId?: string;
+  	threadId?: string;
   	[key: string]: unknown;
   }
 
@@ -1364,6 +1368,7 @@ function DocumentChat() {
 		description: 'Documents',
 		icon: <FileText size={16} />,
 		color: '#8b5cf6',
+		order: 5, // Control display order when mentioned
 	});
 
 	return <ChatInput />;
@@ -1374,10 +1379,10 @@ For detailed information about mentions, including custom providers, multiple tr
 
 ## State Subscription
 
-Automatically sync your specific cedarStates to the agent input context using `subscribeInputContext`:
+Automatically sync your specific cedarStates to the agent input context using `useSubscribeInputContext`:
 
 ```tsx
-import { subscribeInputContext } from 'cedar-os';
+import { useSubscribeInputContext } from 'cedar-os';
 import { useState } from 'react';
 
 function AutoSyncChat() {
@@ -1387,7 +1392,7 @@ function AutoSyncChat() {
 	});
 
 	// Automatically sync state to context
-	subscribeInputContext(
+	useSubscribeInputContext(
 		appState,
 		(state) => ({
 			'app-state': [
@@ -1401,6 +1406,7 @@ function AutoSyncChat() {
 		{
 			icon: <Settings size={16} />,
 			color: '#6b7280',
+			order: 10, // Control display order of context badges
 		}
 	);
 
@@ -1416,30 +1422,104 @@ This is for advanced understanding. Move on to [Agentic State Access](/state-acc
 
 ## Default Context Tokenization
 
-Cedar automatically manages sending this additional context to the LLM. However, if you're interested in how it does it, here's a breakdown. Cedar's `sendMessage` function automatically tokenizes context using these steps:
+Cedar's `sendMessage` function automatically handles context based on your provider configuration:
 
-1. **Extract Editor Content**: `stringifyEditor()` converts the rich text editor content to plain text
-2. **Combine with Context**: `stringifyInputContext()` merges the editor content with additional context
-3. **Send to AI**: The combined string is sent as the prompt to your AI provider
-
-Here's how the default process works:
+### For Structured Providers (Mastra, Custom)
 
 ```tsx
-// Inside sendMessage (simplified)
+// Inside sendMessage for Mastra/Custom providers
 const editorContent = state.stringifyEditor(); // "Update @task-123 status"
-const fullContext = state.stringifyInputContext(); // Full context with mentions data
+const structuredContext = sanitizeJson(state.additionalContext); // Raw object
 
-// fullContext contains:
-// User Text: Update @task-123 status
-//
-// Additional Context: {
-//   "tasks": [{
-//     "id": "task-123",
-//     "source": "mention",
-//     "data": { "title": "Fix login bug", "status": "in-progress" },
-//     "metadata": { "label": "Fix login bug" }
-//   }]
-// }
+// Sent as separate fields:
+const llmParams = {
+	prompt: editorContent, // Clean user text
+	additionalContext: structuredContext, // Structured data object
+	route: '/chat',
+	userId: 'user-123',
+};
+```
+
+### For Text-Based Providers (OpenAI, Anthropic, AI-SDK)
+
+```tsx
+// Inside sendMessage for direct LLM providers
+const editorContent = state.stringifyEditor(); // "Update @task-123 status"
+const fullContext = state.stringifyInputContext(); // Combined string
+
+// Sent as unified prompt:
+const llmParams = {
+	prompt: fullContext, // Contains: "User Text: ... \n\nAdditional Context: {...}"
+	model: 'gpt-4o-mini',
+};
+```
+
+## Backend Integration Examples
+
+### Mastra Backend Example
+
+```typescript
+// Your Mastra agent receives structured data
+export const chatAgent = {
+	name: 'Chat Agent',
+	instructions: 'You are a helpful assistant',
+	model: 'gpt-4o-mini',
+
+	async execute(input: { prompt: string; additionalContext?: any }) {
+		const { prompt, additionalContext } = input;
+
+		// Process user intent from clean prompt
+		console.log('User wants:', prompt);
+
+		// Access structured context programmatically
+		if (additionalContext?.tasks) {
+			const mentionedTasks = additionalContext.tasks
+				.filter((entry) => entry.source === 'mention')
+				.map((entry) => entry.data);
+
+			console.log('Referenced tasks:', mentionedTasks);
+		}
+
+		// Your custom logic here...
+	},
+};
+```
+
+### Custom Provider Backend Example
+
+```typescript
+// Your custom endpoint receives both fields
+app.post('/api/chat', async (req, res) => {
+	const { prompt, additionalContext, userId } = req.body;
+
+	// Clean user message for intent processing
+	const userIntent = await processIntent(prompt);
+
+	// Structured context for data operations
+	const contextualData = {
+		mentions: additionalContext?.tasks || [],
+		userState: additionalContext?.['user-state'] || [],
+		documents: additionalContext?.documents || [],
+	};
+
+	// Combine for LLM call
+	const systemPrompt = `
+    User Intent: ${userIntent}
+    Available Context: ${JSON.stringify(contextualData)}
+    
+    Respond helpfully using the provided context.
+  `;
+
+	const response = await openai.chat.completions.create({
+		model: 'gpt-4o-mini',
+		messages: [
+			{ role: 'system', content: systemPrompt },
+			{ role: 'user', content: prompt },
+		],
+	});
+
+	res.json({ content: response.choices[0].message.content });
+});
 ```
 
 ## Accessing Additional Context
@@ -1658,7 +1738,7 @@ function CustomContextProcessor() {
 		// Handle response
 		store.handleLLMResult(response);
 
-		// Add user message to chat
+		// Add user message to chat (persists by default if message storage is configured)
 		store.addMessage({
 			role: 'user',
 			type: 'text',
@@ -1772,6 +1852,7 @@ function TodoApp() {
 		description: 'Todo items',
 		icon: '📝',
 		color: '#3b82f6',
+		order: 10, // Control display order of mentioned todos
 	});
 
 	return <ChatInput />;
@@ -1830,6 +1911,7 @@ function UserMentions() {
 				label: item.label,
 				icon: '👤',
 				color: '#10b981',
+				order: 5, // Users appear before other mentions
 			},
 		}),
 	});
@@ -2187,11 +2269,120 @@ function getProjects() {
 
 function getTasks() {
 	return [
-		{ id: '1', title: 'Fix login bug' },
-		{ id: '2', title: 'Add dark mode' },
+		{ id: '1', title: 'Review PR #123' },
+		{ id: '2', title: 'Update documentation' },
 	];
 }
 ```
+
+## Ordering Mentions
+
+When you have multiple mention providers or context subscriptions, you can control their display order using the `order` property. This ensures the most important context appears first in the UI.
+
+### Order Property
+
+The `order` property (optional) determines the display order of context badges:
+
+* **Lower numbers appear first**: `order: 1` appears before `order: 10`
+* **Default behavior**: Items without an order appear last
+* **Applies to both**: Mention providers and `useSubscribeInputContext`
+
+### Example: Prioritized Mentions
+
+```tsx
+import {
+	useStateBasedMentionProvider,
+	useSubscribeInputContext,
+} from 'cedar-os';
+import { User, FileText, Tag, Archive } from 'lucide-react';
+
+function PrioritizedMentions() {
+	// Current user context - highest priority (order: 1)
+	useSubscribeInputContext(currentUser, (user) => ({ currentUser: user }), {
+		icon: <User />,
+		color: '#8B5CF6',
+		order: 1, // Always visible first
+	});
+
+	// Active documents - high priority (order: 5)
+	useStateBasedMentionProvider({
+		stateKey: 'activeDocuments',
+		trigger: '@',
+		labelField: 'title',
+		description: 'Active Documents',
+		icon: <FileText />,
+		color: '#3B82F6',
+		order: 5, // After user, before tags
+	});
+
+	// Tags - medium priority (order: 10)
+	useStateBasedMentionProvider({
+		stateKey: 'tags',
+		trigger: '#',
+		labelField: 'name',
+		description: 'Tags',
+		icon: <Tag />,
+		color: '#10B981',
+		order: 10, // After documents
+	});
+
+	// Archived items - low priority (order: 100)
+	useStateBasedMentionProvider({
+		stateKey: 'archivedItems',
+		trigger: '@',
+		labelField: 'title',
+		description: 'Archived',
+		icon: <Archive />,
+		color: '#6B7280',
+		order: 100, // Appears last
+	});
+
+	return <ChatInput />;
+}
+```
+
+### Custom Provider with Order
+
+When using `useMentionProvider`, include order in the metadata:
+
+```tsx
+useMentionProvider({
+	id: 'priority-users',
+	trigger: '@',
+	label: 'Team Leads',
+	getItems: (query) => {
+		// ... filtering logic
+		return items.map((item) => ({
+			id: item.id,
+			label: item.name,
+			data: item,
+			metadata: {
+				icon: '👤',
+				color: '#EF4444',
+			},
+		}));
+	},
+	toContextEntry: (item) => ({
+		id: item.id,
+		source: 'mention',
+		data: item.data,
+		metadata: {
+			label: item.label,
+			icon: item.metadata.icon,
+			color: item.metadata.color,
+			order: 2, // Team leads appear near the top
+		},
+	}),
+});
+```
+
+### Best Practices for Ordering
+
+1. **Reserve low numbers (1-9)** for critical context like user info
+2. **Use 10-49** for active/selected items
+3. **Use 50-99** for general mentions
+4. **Use 100+** for archived or low-priority items
+5. **Leave gaps** between orders for future additions
 
 ## Mention Data in Context
 
@@ -2404,32 +2595,36 @@ Source: https://docs.cedarcopilot.com/agent-input-context/subscribing-state
 
 Automatically add state to the agent input context
 
-Cedar's `subscribeInputContext` function allows you to automatically make any part of your application state available to AI agents as context. This enables agents to understand your app's current state and provide more relevant, contextual responses.
+Cedar's `useSubscribeInputContext` function allows you to automatically make any part of your application state available to AI agents as context. This enables agents to understand your app's current state and provide more relevant, contextual responses.
 
-## subscribeInputContext Overview
+## useSubscribeInputContext Overview
 
-The `subscribeInputContext` function subscribes to local state changes and automatically updates the agent's input context whenever the state changes. This means your AI agent always has access to the most up-to-date information from your application.
+The `useSubscribeInputContext` function subscribes to local state changes and automatically updates the agent's input context whenever the state changes. This means your AI agent always has access to the most up-to-date information from your application.
 
 ### Function Signature
 
 ```typescript
-function subscribeInputContext<T>(
+function useSubscribeInputContext<T>(
 	localState: T,
 	mapFn: (state: T) => Record<string, any>,
 	options?: {
 		icon?: ReactNode;
 		color?: string;
+		labelField?: string | ((item: unknown) => string);
+		order?: number;
 	}
 ): void;
 ```
 
 ### Parameters
 
-* **`localState: T`** - The local state to subscribe to (any type)
+* **`localState: T`** - The local state to subscribe to (any type including single values or arrays)
 * **`mapFn: (state: T) => Record<string, any>`** - Function that maps your state to context entries
-* **`options`** (optional) - Configuration for visual representation:
+* **`options`** (optional) - Configuration for visual representation and label extraction:
   * `icon?: ReactNode` - Icon to display for this context
   * `color?: string` - Hex color for visual styling
+  * `labelField?: string | ((item: unknown) => string)` - How to extract labels from your data
+  * `order?: number` - Display order for context badges (lower numbers appear first)
 
 ## Basic Usage Example
 
@@ -2437,7 +2632,7 @@ Here's a simple example with a todo list:
 
 ```tsx
 import React, { useState } from 'react';
-import { subscribeInputContext } from 'cedar-os';
+import { useSubscribeInputContext } from 'cedar-os';
 import { CheckCircle } from 'lucide-react';
 
 function TodoApp() {
@@ -2447,7 +2642,7 @@ function TodoApp() {
 	]);
 
 	// Subscribe todos to input context
-	subscribeInputContext(
+	useSubscribeInputContext(
 		todos,
 		(todoList) => ({
 			todos: todoList, // Key 'todos' will be available to the agent
@@ -2455,6 +2650,7 @@ function TodoApp() {
 		{
 			icon: <CheckCircle />,
 			color: '#10B981', // Green color
+			labelField: 'text', // Use the 'text' field as label for each todo
 		}
 	);
 
@@ -2472,7 +2668,7 @@ function TodoApp() {
 Here's a more advanced example from the Product Roadmap demo:
 
 ```tsx
-import { subscribeInputContext } from 'cedar-os';
+import { useSubscribeInputContext } from 'cedar-os';
 import { Box } from 'lucide-react';
 import { Node } from 'reactflow';
 
@@ -2487,7 +2683,7 @@ function SelectedNodesPanel() {
 	const [selected, setSelected] = useState<Node<FeatureNodeData>[]>([]);
 
 	// Subscribe selected nodes to input context
-	subscribeInputContext(
+	useSubscribeInputContext(
 		selected,
 		(nodes: Node<FeatureNodeData>[]) => ({
 			selectedNodes: nodes.map((node) => ({
@@ -2501,6 +2697,7 @@ function SelectedNodesPanel() {
 		{
 			icon: <Box />,
 			color: '#8B5CF6', // Purple color for selected nodes
+			labelField: 'title', // Use title field for labels
 		}
 	);
 
@@ -2520,9 +2717,221 @@ function SelectedNodesPanel() {
 }
 ```
 
+## Using the labelField Option
+
+The `labelField` option allows you to specify how labels should be extracted from your data. This is especially useful when your data has custom field names or when you need custom label logic.
+
+### labelField as a String
+
+Specify which field to use as the label:
+
+```tsx
+const [users, setUsers] = useState([
+	{ userId: 'u1', fullName: 'John Doe', email: 'john@example.com' },
+	{ userId: 'u2', fullName: 'Jane Smith', email: 'jane@example.com' },
+]);
+
+useSubscribeInputContext(users, (userList) => ({ activeUsers: userList }), {
+	labelField: 'fullName', // Will use fullName as the label
+	icon: <User />,
+	color: '#3B82F6',
+});
+```
+
+### labelField as a Function
+
+Use a function for custom label generation:
+
+```tsx
+const [products, setProducts] = useState([
+	{ sku: 'P001', name: 'Laptop', price: 999, inStock: true },
+	{ sku: 'P002', name: 'Mouse', price: 29, inStock: false },
+]);
+
+useSubscribeInputContext(
+	products,
+	(productList) => ({ inventory: productList }),
+	{
+		labelField: (product) =>
+			`${product.name} (${product.inStock ? 'In Stock' : 'Out of Stock'})`,
+		icon: <Package />,
+		color: '#10B981',
+	}
+);
+```
+
+### Single Values Support
+
+`useSubscribeInputContext` now supports single values (not just arrays):
+
+```tsx
+const [count, setCount] = useState(42);
+const [isEnabled, setIsEnabled] = useState(true);
+const [userName, setUserName] = useState('Alice');
+
+// Subscribe a number
+useSubscribeInputContext(count, (value) => ({ itemCount: value }), {
+	icon: <Hash />,
+	color: '#F59E0B',
+});
+
+// Subscribe a boolean
+useSubscribeInputContext(isEnabled, (value) => ({ featureEnabled: value }), {
+	icon: <ToggleLeft />,
+	color: '#10B981',
+});
+
+// Subscribe a string with custom label
+useSubscribeInputContext(userName, (value) => ({ currentUser: value }), {
+	labelField: (name) => `User: ${name}`,
+	icon: <User />,
+	color: '#8B5CF6',
+});
+```
+
+## Controlling Display Order
+
+The `order` property allows you to control the display order of context badges in the UI. This is useful when you have multiple context subscriptions and want to prioritize their visibility.
+
+### How Order Works
+
+* **Lower numbers appear first**: `order: 1` will appear before `order: 10`
+* **Default behavior**: Items without an order are treated as having the maximum order value
+* **Stable sorting**: Items with the same order maintain their original relative position
+
+### Basic Order Example
+
+```tsx
+function PrioritizedContext() {
+	const [criticalAlerts, setCriticalAlerts] = useState([]);
+	const [normalTasks, setNormalTasks] = useState([]);
+	const [archivedItems, setArchivedItems] = useState([]);
+
+	// Critical alerts appear first (order: 1)
+	useSubscribeInputContext(
+		criticalAlerts,
+		(alerts) => ({ criticalAlerts: alerts }),
+		{
+			icon: <AlertCircle />,
+			color: '#EF4444',
+			order: 1, // Highest priority - appears first
+		}
+	);
+
+	// Normal tasks appear second (order: 10)
+	useSubscribeInputContext(normalTasks, (tasks) => ({ activeTasks: tasks }), {
+		icon: <CheckCircle />,
+		color: '#3B82F6',
+		order: 10, // Medium priority
+	});
+
+	// Archived items appear last (order: 100)
+	useSubscribeInputContext(
+		archivedItems,
+		(items) => ({ archivedItems: items }),
+		{
+			icon: <Archive />,
+			color: '#6B7280',
+			order: 100, // Low priority - appears last
+		}
+	);
+
+	return <ChatInput />;
+}
+```
+
+### Complex Order Example with Mention Providers
+
+When combining `useSubscribeInputContext` with mention providers, you can create a well-organized context display:
+
+```tsx
+import { useStateBasedMentionProvider } from 'cedar-os';
+
+function OrganizedWorkspace() {
+	const [selectedNodes, setSelectedNodes] = useState([]);
+	const [user, setUser] = useState(null);
+
+	// User context appears first (order: 1)
+	useSubscribeInputContext(user, (userData) => ({ currentUser: userData }), {
+		icon: <User />,
+		color: '#8B5CF6',
+		labelField: 'name',
+		order: 1, // User info always visible first
+	});
+
+	// Selected items appear second (order: 5)
+	useSubscribeInputContext(
+		selectedNodes,
+		(nodes) => ({ selectedNodes: nodes }),
+		{
+			icon: <Box />,
+			color: '#F59E0B',
+			labelField: 'title',
+			order: 5, // Selection context after user
+		}
+	);
+
+	// Mention provider for all nodes (order: 10)
+	useStateBasedMentionProvider({
+		stateKey: 'nodes',
+		trigger: '@',
+		labelField: 'title',
+		description: 'All nodes',
+		icon: <Box />,
+		color: '#3B82F6',
+		order: 10, // Available nodes after selections
+	});
+
+	// Mention provider for connections (order: 20)
+	useStateBasedMentionProvider({
+		stateKey: 'edges',
+		trigger: '@',
+		labelField: (edge) => `${edge.source} → ${edge.target}`,
+		description: 'Connections',
+		icon: <ArrowRight />,
+		color: '#10B981',
+		order: 20, // Connections appear last
+	});
+
+	return <ChatInput />;
+}
+```
+
+### Order Best Practices
+
+1. **Use consistent spacing**: Leave gaps between order values (1, 10, 20) to allow for future insertions
+2. **Group related contexts**: Give similar contexts adjacent order values
+3. **Prioritize by importance**: Most relevant context should have lower order values
+4. **Document your ordering**: Comment why certain items have specific orders
+
+```tsx
+// Order schema for our app:
+// 1-9: User and session data (critical context)
+// 10-19: Current selections and active state
+// 20-49: General application state
+// 50-99: Historical or computed data
+// 100+: Low priority or debug information
+
+useSubscribeInputContext(sessionData, mapper, { order: 1 }); // Critical
+useSubscribeInputContext(selectedItems, mapper, { order: 10 }); // Active
+useSubscribeInputContext(appState, mapper, { order: 20 }); // General
+useSubscribeInputContext(history, mapper, { order: 50 }); // Historical
+useSubscribeInputContext(debugInfo, mapper, { order: 100 }); // Debug
+```
+
+### Default Label Extraction
+
+When no `labelField` is specified, the function looks for labels in this order:
+
+1. `title` field
+2. `label` field
+3. `name` field
+4. `id` field
+5. String representation of the value
+
 ## How It Works Automatically
 
-When you use `subscribeInputContext`, here's what happens automatically:
+When you use `useSubscribeInputContext`, here's what happens automatically:
 
 1. **State Monitoring**: The function uses React's `useEffect` to monitor changes to your `localState`
 2. **Context Mapping**: When state changes, your `mapFn` transforms the state into context entries
@@ -2547,7 +2956,7 @@ interface ContextEntry {
 }
 ```
 
-When using `subscribeInputContext`, entries are automatically marked with `source: 'subscription'`.
+When using `useSubscribeInputContext`, entries are automatically marked with `source: 'subscription'`.
 
 ## Multiple State Subscriptions
 
@@ -2560,7 +2969,7 @@ function MyApp() {
 	const [currentPage, setCurrentPage] = useState('/dashboard');
 
 	// Subscribe user data
-	subscribeInputContext(
+	useSubscribeInputContext(
 		user,
 		(userData) => ({
 			currentUser: userData
@@ -2578,7 +2987,7 @@ function MyApp() {
 	);
 
 	// Subscribe preferences
-	subscribeInputContext(
+	useSubscribeInputContext(
 		preferences,
 		(prefs) => ({
 			userPreferences: prefs,
@@ -2590,7 +2999,7 @@ function MyApp() {
 	);
 
 	// Subscribe navigation state
-	subscribeInputContext(
+	useSubscribeInputContext(
 		currentPage,
 		(page) => ({
 			currentPage: {
@@ -2615,7 +3024,7 @@ function MyApp() {
 Don't expose sensitive information to the agent:
 
 ```tsx
-subscribeInputContext(userProfile, (profile) => ({
+useSubscribeInputContext(userProfile, (profile) => ({
 	user: {
 		name: profile.name,
 		tier: profile.subscriptionTier,
@@ -2630,7 +3039,7 @@ subscribeInputContext(userProfile, (profile) => ({
 Choose descriptive keys for your context:
 
 ```tsx
-subscribeInputContext(shoppingCart, (cart) => ({
+useSubscribeInputContext(shoppingCart, (cart) => ({
 	shoppingCart: cart.items, // Clear and descriptive
 	cartTotal: cart.total,
 	cartItemCount: cart.items.length,
@@ -2642,7 +3051,7 @@ subscribeInputContext(shoppingCart, (cart) => ({
 For large data sets, consider filtering or summarizing:
 
 ```tsx
-subscribeInputContext(allTransactions, (transactions) => ({
+useSubscribeInputContext(allTransactions, (transactions) => ({
 	recentTransactions: transactions
 		.slice(0, 10) // Only last 10 transactions
 		.map((t) => ({
@@ -2666,7 +3075,7 @@ The `options` parameter allows you to customize how the context appears in the U
 import { Star, AlertCircle, CheckCircle } from 'lucide-react';
 
 // Different colors and icons for different priorities
-subscribeInputContext(
+useSubscribeInputContext(
 	highPriorityTasks,
 	(tasks) => ({ highPriorityTasks: tasks }),
 	{
@@ -2675,12 +3084,16 @@ subscribeInputContext(
 	}
 );
 
-subscribeInputContext(completedTasks, (tasks) => ({ completedTasks: tasks }), {
-	icon: <CheckCircle />,
-	color: '#10B981', // Green for completed
-});
+useSubscribeInputContext(
+	completedTasks,
+	(tasks) => ({ completedTasks: tasks }),
+	{
+		icon: <CheckCircle />,
+		color: '#10B981', // Green for completed
+	}
+);
 
-subscribeInputContext(starredItems, (items) => ({ starredItems: items }), {
+useSubscribeInputContext(starredItems, (items) => ({ starredItems: items }), {
 	icon: <Star />,
 	color: '#F59E0B', // Yellow for starred
 });
@@ -2694,7 +3107,7 @@ The subscribed context automatically becomes available to your AI agent when usi
 import { ChatInput } from 'cedar-os-components';
 
 function MyChat() {
-	// Your subscribeInputContext calls here...
+	// Your useSubscribeInputContext calls here...
 
 	return (
 		<div>
@@ -3636,6 +4049,304 @@ function InteractiveMessage({ message }) {
 * Explore [subscribing to state](/chat/subscribing-state)
 
 
+# Message Storage Configuration
+Source: https://docs.cedarcopilot.com/chat/message-storage-configuration
+
+Configure how Cedar persists chat messages and manages threads
+
+Cedar provides a flexible storage system for managing chat messages with automatic persistence and **automatic thread management**. By default, Cedar uses **no storage** - no persistence unless you configure a storage adapter.
+
+# Quick Start
+
+Cedar works out of the box with no storage (no persistence). To enable persistence, configure a storage adapter.
+
+# Storage Options
+
+Cedar supports three storage adapters:
+
+1. **Local Storage** (default) - Browser localStorage
+2. **No Storage** - Disables persistence
+3. **Custom Storage** - Your own implementation
+
+Configure storage by passing the `messageStorage` prop to CedarCopilot:
+
+<CodeGroup>
+  ```typescript Local Storage (Default)
+  import { CedarCopilot } from 'cedar-os';
+
+  function App() {
+  	return (
+  		<CedarCopilot
+  			// No storage prop needed - uses local storage by default.
+  			// Optionally pass in user ID
+  			userId='user-123'>
+  			<YourChatComponent />
+  		</CedarCopilot>
+  	);
+  }
+  ```
+
+  ```typescript Local Storage (Custom Key)
+  import { CedarCopilot } from 'cedar-os';
+
+  function App() {
+  	return (
+  		<CedarCopilot
+  			messageStorage={{
+  				type: 'local',
+  				options: {
+  					key: 'my-app', // Optional: defaults to 'cedar'
+  				},
+  			}}
+  			userId='user-123'>
+  			<YourChatComponent />
+  		</CedarCopilot>
+  	);
+  }
+  ```
+
+  ```typescript No Storage
+  import { CedarCopilot } from 'cedar-os';
+
+  function App() {
+  	return (
+  		<CedarCopilot messageStorage={{ type: 'none' }} userId='user-123'>
+  			<YourChatComponent />
+  		</CedarCopilot>
+  	);
+  }
+  ```
+
+  ```typescript Custom Storage
+  import { CedarCopilot } from 'cedar-os';
+
+  const myCustomAdapter = {
+  	async listThreads(userId) {
+  		return await myDatabase.getThreads(userId);
+  	},
+  	async loadMessages(userId, threadId) {
+  		return await myDatabase.getMessages(userId, threadId);
+  	},
+  	async persistMessage(userId, threadId, message) {
+  		await myDatabase.appendMessage(userId, threadId, message);
+  	},
+  };
+
+  function App() {
+  	return (
+  		<CedarCopilot
+  			messageStorage={{
+  				type: 'custom',
+  				adapter: myCustomAdapter,
+  			}}
+  			userId='user-123'>
+  			<YourChatComponent />
+  		</CedarCopilot>
+  	);
+  }
+  ```
+</CodeGroup>
+
+# Additional Configuration Requirements by Storage Type
+
+### Local Storage & No Storage
+
+**No additional configuration needed** - these options work out of the box.
+
+### Custom Storage
+
+Implement your own storage solution by providing a custom adapter:
+
+<CodeGroup>
+  ```typescript Interface
+  interface BaseStorageAdapter {
+  	// Required methods
+  	loadMessages(
+  		userId: string | null | undefined,
+  		threadId: string
+  	): Promise<Message[]>;
+  	persistMessage(
+  		userId: string | null | undefined,
+  		threadId: string,
+  		message: Message
+  	): Promise<Message>; // returns the saved message
+
+  	// Optional thread methods
+  	listThreads?(userId?: string | null): Promise<ThreadMeta[]>;
+  	createThread?(
+  		userId: string | null | undefined,
+  		threadId: string,
+  		meta: ThreadMeta
+  	): Promise<ThreadMeta>; // returns new meta
+  	updateThread?(
+  		userId: string | null | undefined,
+  		threadId: string,
+  		meta: ThreadMeta
+  	): Promise<ThreadMeta>; // returns updated meta
+  	deleteThread?(
+  		userId: string | null | undefined,
+  		threadId: string
+  	): Promise<ThreadMeta | undefined>; // returns deleted meta (optional)
+
+  	// Optional message methods
+  	updateMessage?(
+  		userId: string | null | undefined,
+  		threadId: string,
+  		message: Message
+  	): Promise<Message>; // returns updated message
+  	deleteMessage?(
+  		userId: string | null | undefined,
+  		threadId: string,
+  		messageId: string
+  	): Promise<Message | undefined>; // returns deleted message (optional)
+  }
+  ```
+
+  All mutator/creator functions return the object they operate on, making it easy to work with the freshly-persisted data (IDs, timestamps, etc.).
+
+  ```typescript Example Implementation
+  import { CedarCopilot } from 'cedar-os';
+
+  // Your custom storage implementation
+  const myCustomAdapter = {
+  	async listThreads(userId) {
+  		return await myDatabase.getThreads(userId);
+  	},
+
+  	async loadMessages(userId, threadId) {
+  		return await myDatabase.getMessages(userId, threadId);
+  	},
+
+  	async persistMessage(userId, threadId, message) {
+  		await myDatabase.appendMessage(userId, threadId, message);
+  	},
+  };
+
+  function App() {
+  	return (
+  		<CedarCopilot
+  			messageStorage={{
+  				type: 'custom',
+  				adapter: myCustomAdapter,
+  			}}
+  			userId='user-123' // User ID passed in initial configuration
+  		>
+  			<YourChatComponent />
+  		</CedarCopilot>
+  	);
+  }
+  ```
+</CodeGroup>
+
+## How Default Message Storage Works
+
+Cedar automatically handles message storage operations in the following way:
+
+**Thread & Message Loading:**
+
+* **When user ID changes**: Automatically loads all threads for that user
+* **When storage adapter changes**: Loads threads from the new storage system
+* **When the thread ID changes**: Automatically loads in all messages for that thread
+
+<Info>
+  Best practice: make your **load** endpoints idempotent. Implementations of
+  `listThreads` or `loadMessages`should **NOT** perform any mutations such as
+  creating threads or messages. Cedar may call these functions multiple times
+  during normal operation; if they create data each time you could end up with
+  duplicated threads or messages.
+</Info>
+
+**Message Persistence & Thread Updates:**
+
+* **User messages**: Persisted immediately when sent via `sendMessage()` (internally calls `store.persistMessage`).
+* **Assistant responses**:
+  * **Non-streaming**: Persisted right after the LLM reply finishes.
+  * **Streaming**: Buffered during streaming and persisted once when the stream ends.
+* **Automatic thread meta update**: Every persisted message refreshes the thread’s `updatedAt` and `lastMessage` fields. The thread title is **always** the very first message in the thread and is never overwritten.
+
+# User and Thread Management
+
+<Info>
+  User ID and thread ID are automatically sent to the backend for Mastra and
+  Custom backends. See Agent Backend Connection docs for more details.
+</Info>
+
+**Setting User ID:**
+User ID is treated internally as just another Cedar State. If at runtime you want to override the user ID when using `callLLM`, it is also available on the `SendMessageParams` type
+
+<CodeGroup>
+  ```typescript Using Store
+  import { useCedarStore } from 'cedar-os';
+
+  function LoginHandler({ userId }: { userId: string }) {
+  	const store = useCedarStore();
+
+  	// Set user context - Cedar will load this user's threads
+  	store.getState().setCedarState('userId', userId);
+
+  	return <YourChatComponent />;
+  }
+  ```
+
+  ```typescript Initial Configuration
+  import { CedarCopilot } from 'cedar-os';
+
+  function App({ userId }: { userId: string }) {
+  	return (
+  		<CedarCopilot
+  			userId={userId} // Set user ID in initial configuration
+  			messageStorage={{
+  				type: 'local', // or 'none', 'custom'
+  			}}>
+  			<YourChatComponent />
+  		</CedarCopilot>
+  	);
+  }
+  ```
+</CodeGroup>
+
+**Setting Thread ID:**
+By default, Cedar will use the thread ID stored in the store. If at runtime you want to override the thread ID when using `callLLM`, it is also available on the `SendMessageParams` type
+
+```typescript
+import { useCedarStore } from 'cedar-os';
+
+function ConversationSwitcher() {
+	const store = useCedarStore();
+
+	const switchToThread = (threadId: string) => {
+		// Cedar will save current thread and load the new one
+		store.getState().setCurrentThreadId(threadId);
+	};
+
+	return (
+		<div>
+			<button onClick={() => switchToThread('project-discussion')}>
+				Project Discussion
+			</button>
+			<button onClick={() => switchToThread('support-ticket')}>
+				Support Ticket
+			</button>
+		</div>
+	);
+}
+```
+
+## Error Handling
+
+Cedar's storage system is designed to fail gracefully:
+
+* **Storage failures** are silently caught to prevent UI crashes
+* **Failed loads** return empty arrays rather than throwing errors
+* **Malformed data** is handled with safe fallbacks
+
+## Next Steps
+
+* Learn about [custom message rendering](/getting-started/chat/custom-message-rendering) for rich content
+* Explore [streaming responses](/getting-started/chat/streaming) for real-time interactions
+* Set up [agent backend connections](/getting-started/agent-backend-connection/agent-backend-connection) for AI responses
+
+
 # Streaming
 Source: https://docs.cedarcopilot.com/chat/streaming
 
@@ -3861,6 +4572,424 @@ When streaming is enabled:
 * Set up our [cedar-mastra-starter](https://github.com/CedarCopilot/cedar-mastra-starter) for an example of streaming from a separate Mastra server.
 * Sending back a custom object type? Render it using [custom message rendering](/chat/custom-message-rendering)
 * Learn about [configuring the Cedar editor](/chat/configuring-cedar-editor)
+
+
+# null
+Source: https://docs.cedarcopilot.com/components/markdown-renderer
+
+
+
+# MarkdownRenderer Component
+
+The `MarkdownRenderer` component provides consistent markdown rendering across Cedar OS with advanced features like code syntax highlighting, copy functionality, and prefix processing for chat interfaces.
+
+## Features
+
+* **GitHub Flavored Markdown**: Full GFM support including tables, strikethrough, and more
+* **Code Highlighting**: Syntax highlighting with copy-to-clipboard functionality
+* **Prefix Processing**: Special handling for prefixed content (useful in chat)
+* **Cedar OS Integration**: Automatic theming and styling consistency
+* **Inline/Block Modes**: Flexible rendering for different contexts
+* **Interactive Elements**: Copy buttons, hover effects, and edit placeholders
+
+## Import
+
+```tsx
+import { MarkdownRenderer } from 'cedar-os-components/chatMessages/MarkdownRenderer';
+```
+
+## Basic Usage
+
+```tsx
+<MarkdownRenderer content='# Hello World\n\nThis is **bold** and *italic* text.' />
+```
+
+## Props
+
+| Prop            | Type      | Default | Description                                           |
+| --------------- | --------- | ------- | ----------------------------------------------------- |
+| `content`       | `string`  | -       | The markdown content to render (required)             |
+| `processPrefix` | `boolean` | `false` | Whether to process prefix markers for special styling |
+| `className`     | `string`  | `''`    | Additional CSS classes                                |
+| `inline`        | `boolean` | `false` | Whether to render in inline mode                      |
+
+## Supported Markdown Elements
+
+### Headers
+
+```markdown
+# H1 Header
+
+## H2 Header
+
+### H3 Header
+
+#### H4 Header
+
+##### H5 Header
+
+###### H6 Header
+```
+
+### Text Formatting
+
+```markdown
+**Bold text**
+_Italic text_
+~~Strikethrough~~
+`Inline code`
+```
+
+### Links
+
+```markdown
+[Link text](https://example.com)
+```
+
+* Opens in new tab automatically
+* `noopener noreferrer` for security
+
+### Code Blocks
+
+````markdown
+```javascript
+function hello() {
+	console.log('Hello World!');
+}
+```
+````
+
+Features:
+
+* Language detection and display
+* Copy to clipboard button
+* Edit placeholder button
+* Syntax highlighting
+* Horizontal scrolling for long lines
+
+### Lists
+
+```markdown
+- Unordered list item 1
+- Unordered list item 2
+
+1. Ordered list item 1
+2. Ordered list item 2
+```
+
+### Blockquotes
+
+```markdown
+> This is a blockquote
+> It can span multiple lines
+```
+
+### Tables
+
+```markdown
+| Column 1 | Column 2 | Column 3 |
+| -------- | -------- | -------- |
+| Row 1    | Data     | More     |
+| Row 2    | Data     | More     |
+```
+
+## Inline Mode
+
+Perfect for rendering markdown within text flows:
+
+```tsx
+<MarkdownRenderer content='This is **bold** text inline' inline={true} />
+```
+
+In inline mode:
+
+* Paragraphs render as `<span>` instead of `<p>`
+* Maintains text flow
+* Preserves inline formatting
+
+## Prefix Processing
+
+For chat interfaces where you need special styling for prefixes:
+
+```tsx
+<MarkdownRenderer
+	content="@@PREFIX@@Assistant: @@ENDPREFIX@@Here's my response with **markdown**!"
+	processPrefix={true}
+/>
+```
+
+The prefix markers (`@@PREFIX@@` and `@@ENDPREFIX@@`) are automatically:
+
+* Styled with the accent color
+* Processed recursively in nested elements
+* Removed from final output
+
+## Code Block Features
+
+### Copy Functionality
+
+* Hover over code blocks to see copy button
+* Visual feedback when copied
+* Automatic timeout after 2 seconds
+
+### Language Support
+
+```tsx
+<MarkdownRenderer
+	content={`
+\`\`\`typescript
+interface User {
+  name: string;
+  email: string;
+}
+\`\`\`
+`}
+/>
+```
+
+### Inline Code
+
+```tsx
+<MarkdownRenderer content='Use the `useState` hook for state management.' />
+```
+
+## Styling Integration
+
+The component automatically integrates with Cedar OS theming:
+
+```tsx
+// Uses current styling context
+const { styling } = useStyling();
+
+// Applied to:
+// - Accent colors for borders and highlights
+// - Text colors for consistency
+// - Background colors for code blocks
+// - Table styling and borders
+```
+
+## Advanced Examples
+
+### Chat Message Rendering
+
+````tsx
+<MarkdownRenderer
+	content="@@PREFIX@@System: @@ENDPREFIX@@**Task completed!** Here's your code:\n\n```javascript\nconsole.log('Done!');\n```"
+	processPrefix={true}
+	className='chat-message'
+/>
+````
+
+### Documentation Content
+
+```tsx
+<MarkdownRenderer
+	content={`
+# API Documentation
+
+## Overview
+This API provides **powerful** functionality.
+
+### Example Request
+\`\`\`bash
+curl -X POST https://api.example.com/data
+\`\`\`
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| \`name\` | string | User name |
+| \`email\` | string | User email |
+  `}
+/>
+```
+
+### Inline Rich Text
+
+```tsx
+<p>
+	Welcome to our platform!
+	<MarkdownRenderer
+		content='Read our **documentation** and try the `API`'
+		inline={true}
+	/>
+	to get started.
+</p>
+```
+
+## Accessibility
+
+* Proper semantic HTML structure
+* Keyboard navigation support
+* Screen reader friendly
+* High contrast code blocks
+* Focus indicators on interactive elements
+
+## Performance
+
+* Efficient re-rendering with React.memo patterns
+* Lazy loading for complex content
+* Optimized regex processing
+* Minimal DOM updates
+
+## Browser Support
+
+* Modern browsers with ES6+ support
+* Clipboard API for copy functionality
+* CSS Grid/Flexbox for layout
+* Graceful degradation for older browsers
+
+## Integration Notes
+
+* Works seamlessly with TypewriterText component
+* Consistent with other Cedar OS components
+* Supports dark/light theme switching
+* Responsive design for all screen sizes
+
+
+# null
+Source: https://docs.cedarcopilot.com/components/typewriter-text
+
+
+
+# TypewriterText Component
+
+The `TypewriterText` component provides an animated typing effect with adaptive speed based on text length. It supports markdown rendering, customizable delays, and optional prefix styling.
+
+## Features
+
+* **Adaptive Speed**: Automatically adjusts typing speed based on text length
+* **Markdown Support**: Built-in markdown rendering with prefix support
+* **Customizable Cursor**: Optional blinking cursor with styling
+* **Prefix Support**: Special styling for prefixed content
+* **Performance Optimized**: Uses Framer Motion for smooth animations
+
+## Import
+
+```tsx
+import { TypewriterText } from 'cedar-os-components/text/TypewriterText';
+```
+
+## Basic Usage
+
+```tsx
+<TypewriterText text='Hello, this text will type out automatically!' />
+```
+
+## Props
+
+| Prop               | Type         | Default | Description                                                         |
+| ------------------ | ------------ | ------- | ------------------------------------------------------------------- |
+| `text`             | `string`     | -       | The text to be typed out (required)                                 |
+| `className`        | `string`     | `''`    | Additional CSS classes                                              |
+| `charDelay`        | `number`     | `0.025` | Base character delay in seconds. If default, adaptive speed is used |
+| `minCharDelay`     | `number`     | `0.002` | Minimum delay for very long texts (fastest speed)                   |
+| `maxCharDelay`     | `number`     | `0.04`  | Maximum delay for short texts (slowest speed)                       |
+| `showCursor`       | `boolean`    | `true`  | Whether to show the typing cursor                                   |
+| `onTypingStart`    | `() => void` | -       | Callback when typing animation starts                               |
+| `onTypingComplete` | `() => void` | -       | Callback when typing animation completes                            |
+| `blinking`         | `boolean`    | `false` | Whether the cursor should blink                                     |
+| `renderAsMarkdown` | `boolean`    | `true`  | Whether to render content as markdown                               |
+| `prefix`           | `string`     | `''`    | Optional prefix text with special styling                           |
+
+## Adaptive Speed
+
+The component automatically adjusts typing speed based on text length:
+
+* **Short texts** (≤30 words): Use `maxCharDelay` (slower)
+* **Long texts** (≥400 characters): Use `minCharDelay` (faster)
+* **Medium texts**: Exponential interpolation between min and max
+
+```tsx
+// Short text - types slowly
+<TypewriterText text="Hi!" />
+
+// Long text - types faster automatically
+<TypewriterText text="This is a very long piece of text that will type out much faster than shorter text because the component automatically adjusts the speed based on content length..." />
+```
+
+## Custom Speed
+
+Override adaptive speed by setting a custom `charDelay`:
+
+```tsx
+<TypewriterText
+	text='Custom speed text'
+	charDelay={0.05} // Fixed delay of 50ms per character
+/>
+```
+
+## Prefix Styling
+
+Use prefixes for special highlighting (useful for chat interfaces):
+
+```tsx
+<TypewriterText
+	text='This is the main message content'
+	prefix='Assistant: '
+	renderAsMarkdown={true}
+/>
+```
+
+## Callbacks
+
+```tsx
+<TypewriterText
+	text='Watch the console!'
+	onTypingStart={() => console.log('Started typing')}
+	onTypingComplete={() => console.log('Finished typing')}
+/>
+```
+
+## Markdown Support
+
+The component supports full markdown rendering when `renderAsMarkdown` is true:
+
+```tsx
+<TypewriterText
+	text='**Bold text**, *italic text*, and `code blocks` all work!'
+	renderAsMarkdown={true}
+/>
+```
+
+## Custom Cursor
+
+```tsx
+<TypewriterText
+	text='Blinking cursor example'
+	showCursor={true}
+	blinking={true}
+/>
+```
+
+## Advanced Example
+
+```tsx
+<TypewriterText
+	text='# Welcome to Cedar OS\n\nThis is a **powerful** component with `adaptive speed`!'
+	prefix='System: '
+	className='text-lg font-medium'
+	minCharDelay={0.001}
+	maxCharDelay={0.06}
+	blinking={true}
+	onTypingComplete={() => setShowNextSection(true)}
+/>
+```
+
+## Integration with Cedar OS
+
+The component automatically integrates with Cedar OS styling system:
+
+* Uses `useStyling()` hook for consistent theming
+* Cursor color matches the current color scheme
+* Prefix styling uses accent colors
+* Markdown rendering follows Cedar OS design patterns
+
+## Performance Notes
+
+* Uses Framer Motion's `animate` function for optimal performance
+* Automatically cleans up animations on unmount
+* Efficient re-rendering with dependency tracking
+* Smooth 60fps animations with hardware acceleration
 
 
 # Customising Cedar
@@ -4215,6 +5344,412 @@ This page will cover text-based external integrations.
 ## Coming Soon
 
 Content for this section will be added in the next phase.
+
+
+# Getting Started Overview
+Source: https://docs.cedarcopilot.com/getting-started/getting-started
+
+Complete guide to getting started with Cedar-OS
+
+Cedar-OS is an open-source framework for building AI-native applications. This guide will walk you through setting up your first Cedar-OS application with chat functionality, AI backend integration, and state management.
+
+# Installing Cedar-OS
+
+## With Cedar-CLI
+
+<Steps>
+  <Step title="Check Prerequisites">
+    Cedar-OS requires:
+
+    * React 18.2.0 or higher
+    * React DOM 18.2.0 or higher
+    * Node.js 18+ (for development)
+
+    **Framework Support:**
+
+    * ✅ **Next.js (Recommended)** - Full support with optimal performance
+    * ✅ **Create React App** - Supported with additional configuration
+    * ✅ **Vite + React** - Supported with additional configuration
+    * ✅ **Other React frameworks** - May require manual setup
+  </Step>
+
+  <Step title="Install using the cedar-os-cli">
+    Our CLI is the fastest way to get started with Cedar-OS. For most users, run this command - it automatically detects your setup and does the right thing:
+
+    ```bash
+    npx cedar-os-cli plant-seed
+    ```
+
+    **What `plant-seed` does:**
+
+    * **New project**: Offers template selection → Creates project → Adds Cedar components
+
+      <Info>
+        **Recommended:** We highly recommend starting with the Mastra template. It requires the least configuration and is the most powerful way to use Cedar-OS.
+      </Info>
+
+    * **Existing Next.js project**: Automatically adds Cedar components and required dependencies to your project
+
+    * **Existing React project**: Adds Cedar components with a note about Next.js being optimal
+
+    **About Cedar components:** Cedar-OS uses a [shadcn](https://ui.shadcn.com/)-style approach - components are copied directly into your project (not installed as dependencies). This gives you full control to customize, modify, and style the components as needed for your application.
+
+    **When to use `add-sapling` instead:**
+
+    Use this command to install cedar-os and download Cedar components in an existing project if `plant-seed` fails.
+
+    ```bash
+    # Add Cedar components and install dependencies only
+    npx cedar-os-cli add-sapling
+    ```
+
+    **Using CLI flags**
+
+    You can skip prompts using the `--yes` flag:
+
+    ```bash
+    npx cedar-os-cli plant-seed --project-name my-cedar-tree --yes
+    ```
+  </Step>
+
+  <Step title="Add your API key">
+    Create a `.env.local` file in your project root and add your OpenAI API key:
+
+    ```bash
+    # For client-side access (Cedar-OS components in browser)
+    NEXT_PUBLIC_OPENAI_API_KEY=your-openai-api-key
+
+    # For server-side access (API routes, server components)
+    OPENAI_API_KEY=your-openai-api-key
+    ```
+
+    **Choose based on your setup:**
+
+    * Use `NEXT_PUBLIC_OPENAI_API_KEY` if Cedar-OS will make API calls directly from the browser
+    * Use `OPENAI_API_KEY` if you're routing calls through your backend/API routes
+    * You can include both if you need access from both client and server
+
+    This will be based on your agent configuration, see [Agent Backend Connection](/agent-backend-connection/agent-backend-connection) for detailed configuration options.
+  </Step>
+
+  <Step title="Initialize CedarCopilot">
+    Wrap your app with the `CedarCopilot` component and configure your AI provider:
+
+    <Warning>
+      **Important:** CedarCopilot must be used in a client component. Add `"use client"` at the top of any file that uses CedarCopilot.
+    </Warning>
+
+    <CodeGroup>
+      ```tsx Mastra
+      "use client";
+
+      import { CedarCopilot } from 'cedar-os';
+
+      function App() {
+      	return (
+      		<CedarCopilot
+      			llmProvider={{
+      				provider: 'mastra',
+      				baseURL: 'http://localhost:4111', // Your Mastra backend URL
+      				apiKey: process.env.MASTRA_API_KEY, // Optional: only if your backend requires auth
+      			}}>
+      			<YourApp />
+      		</CedarCopilot>
+      	);
+      }
+      ```
+
+      ```tsx AI SDK
+      "use client";
+
+      import { CedarCopilot } from 'cedar-os';
+
+      function App() {
+      	return (
+      		// You don't need to put every model,
+      		// but if you try to use a model without a key it will fail
+      		<CedarCopilot
+      			llmProvider={{
+      				provider: 'ai-sdk',
+      				providers: {
+      					openai: {
+      						apiKey: process.env.NEXT_PUBLIC_OPENAI_API_KEY,
+      					},
+      					anthropic: {
+      						apiKey: process.env.NEXT_PUBLIC_ANTHROPIC_API_KEY,
+      					},
+      					google: {
+      						apiKey: process.env.NEXT_PUBLIC_GOOGLE_API_KEY,
+      					},
+      				},
+      			}}>
+      			<YourApp />
+      		</CedarCopilot>
+      	);
+      }
+      ```
+
+      ```tsx OpenAI
+      "use client";
+
+      import { CedarCopilot } from 'cedar-os';
+
+      function App() {
+      	return (
+      		<CedarCopilot
+      			llmProvider={{
+      				provider: 'openai',
+      				apiKey: process.env.NEXT_PUBLIC_OPENAI_API_KEY,
+      			}}>
+      			<YourApp />
+      		</CedarCopilot>
+      	);
+      }
+      ```
+
+      ```tsx Anthropic
+      "use client";
+
+      import { CedarCopilot } from 'cedar-os';
+
+      function App() {
+      	return (
+      		<CedarCopilot
+      			llmProvider={{
+      				provider: 'anthropic',
+      				apiKey: process.env.NEXT_PUBLIC_ANTHROPIC_API_KEY,
+      			}}>
+      			<YourApp />
+      		</CedarCopilot>
+      	);
+      }
+      ```
+
+      ```tsx Custom Backend
+      "use client";
+
+      import { CedarCopilot } from 'cedar-os';
+
+      function App() {
+      	return (
+      		<CedarCopilot
+      			llmProvider={{
+      				provider: 'custom',
+      				config: {
+      					baseURL: 'https://your-api.com',
+      					apiKey: 'your-api-key',
+      					// Any additional config your backend needs
+      					organizationId: 'org-123',
+      					projectId: 'project-456',
+      				},
+      			}}>
+      			<YourApp />
+      		</CedarCopilot>
+      	);
+      }
+      ```
+    </CodeGroup>
+
+    See [Agent Backend Connection](/agent-backend-connection/agent-backend-connection) for more details. Now you're ready to add a chat!
+  </Step>
+
+  <Step title="Using Cedar">
+    Now that you have Cedar-OS installed and configured, here are your next steps to build your AI-native application:
+
+    **Choose your next feature:**
+
+    * **[Configuring a Chat](/chat/chat-overview)** - Set up chat interfaces with `ChatInput` and `ChatBubbles` components for seamless AI conversations
+    * **[Adding State Access](/state-access/agentic-state-access)** - Enable AI agents to read and modify your application state using `useCedarState`
+    * **[Using Spells](/spells/spells)** - Create interactive radial menus and quick actions for enhanced user experience
+
+    **Quick start examples:**
+
+    <CodeGroup>
+      ```tsx Chat Setup
+      import { FloatingCedarChat } from 'cedar-os';
+
+      function ChatApp() {
+        return (
+          <div className="h-screen">
+            {/* This automatically works */}
+            <FloatingCedarChat />
+          </div>
+        );
+      }
+      ```
+
+      ```tsx State Access
+      import { useRegisterState } from 'cedar-os';
+      import { useState } from 'react';
+
+      function TodoApp() {
+        const [todos, setTodos] = useState([]);
+
+        useRegisterState({
+            key: 'todos',
+            value: todos,
+            setValue: setTodos,
+            description: 'User todo list manageable by AI',
+            customSetters: {
+              addTodo: {
+                name: 'addTodo',
+                description: 'Add a new todo item',
+                parameters: [
+                  { name: 'text', type: 'string', description: 'Todo text' }
+                ],
+                execute: (currentTodos, text) => {
+                  setTodos([...currentTodos, {
+                    id: Date.now(),
+                    text,
+                    completed: false
+                  }]);
+                }
+              },
+              toggleTodo: {
+                name: 'toggleTodo',
+                description: 'Toggle todo completion status',
+                parameters: [
+                  { name: 'id', type: 'number', description: 'Todo ID' }
+                ],
+                execute: (currentTodos, id) => {
+                  setTodos(currentTodos.map(t =>
+                    t.id === id ? { ...t, completed: !t.completed } : t
+                  ));
+                }
+              }
+          }
+        });
+
+        return (
+          <div>
+            {todos.map(todo => (
+              <div key={todo.id}>
+                <input
+                  type="checkbox"
+                  checked={todo.completed}
+                  onChange={() => setTodos(todos.map(t =>
+                    t.id === todo.id ? { ...t, completed: !t.completed } : t
+                  ))}
+                />
+                {todo.text}
+              </div>
+            ))}
+          </div>
+        );
+      }
+      ```
+
+      ```tsx Spells Integration
+      import { useSpells } from 'cedar-os';
+      import { useEffect } from 'react';
+
+      function SpellsApp() {
+        const { registerSpell } = useSpells();
+
+        useEffect(() => {
+          registerSpell({
+            id: 'quick-action',
+            name: 'Quick Action',
+            icon: '⚡',
+            action: () => console.log('Spell activated!'),
+            trigger: 'cmd+k'
+          });
+        }, []);
+
+        return (
+          <div>
+            <p>Press Cmd+K to activate spells</p>
+          </div>
+        );
+      }
+      ```
+    </CodeGroup>
+  </Step>
+</Steps>
+
+## Next Steps
+
+Now that you have Cedar-OS set up with basic functionality:
+
+1. **Explore Advanced Features**: Check out [Voice Integration](/voice/voice-integration), [Custom Message Types](/chat/custom-message-rendering), and [Advanced State Management](/state-access/agentic-state-access).
+
+2. **Try Different Providers**: Experiment with [Mastra](/agent-backend-connection/mastra) for full-featured agents or [Direct Provider Integration](/agent-backend-connection/custom).
+
+3. **Customize the UI**: Learn about [Styling and Theming](/customising/styling) to match your brand.
+
+4. **Build Complex Workflows**: Explore our [Examples](/examples) to see Cedar-OS in action with real applications.
+
+## If Things Are Going Wrong
+
+### Manual Installation (CLI Fallback)
+
+If all CLI commands are failing, you can manually install Cedar-OS:
+
+<Steps>
+  <Step title="Install the cedar-os package">
+    <CodeGroup>
+      ```bash npm
+      npm install cedar-os
+      ```
+
+      ```bash yarn
+      yarn add cedar-os
+      ```
+
+      ```bash pnpm
+      pnpm add cedar-os
+      ```
+
+      ```bash bun
+      bun add cedar-os
+      ```
+    </CodeGroup>
+  </Step>
+
+  <Step title="Copy component source code">
+    You will need to manually copy the component source code locally. The component files can be found here: [Cedar-OS Components](https://github.com/CedarCopilot/cedar-OS/tree/main/packages/cedar-os-components)
+
+    Copy the components you need into your project's component directory (typically `src/components/cedar-os/`).
+  </Step>
+
+  <Step title="Install dependencies">
+    Install all the required dependencies for Cedar-OS components:
+
+    <CodeGroup>
+      ```bash npm
+      npm install lucide-react motion motion-plus-react uuid react-markdown framer-motion @radix-ui/react-slot class-variance-authority
+      ```
+
+      ```bash yarn
+      yarn add lucide-react motion motion-plus-react uuid react-markdown framer-motion @radix-ui/react-slot class-variance-authority
+      ```
+
+      ```bash pnpm
+      pnpm add lucide-react motion motion-plus-react uuid react-markdown framer-motion @radix-ui/react-slot class-variance-authority
+      ```
+
+      ```bash bun
+      bun add lucide-react motion motion-plus-react uuid react-markdown framer-motion @radix-ui/react-slot class-variance-authority
+      ```
+    </CodeGroup>
+  </Step>
+</Steps>
+
+### Troubleshooting Common Issues
+
+**Components not rendering**: Make sure you've wrapped your app with `CedarCopilot`.
+
+**Components missing ALL styling**: If Cedar-OS components are missing all styling (we promise they are beautiful!), make sure you have [Tailwind CSS configured](https://tailwindcss.com/docs/installation) in your project.
+
+**Don't see the chat?**: Make sure you add the correct chat component inside the `<CedarCopilot>` boundary. See [Chat Overview](/chat/chat-overview) for setup instructions.
+
+**AI calls failing**: Check that your API keys are correctly set in environment variables and accessible in your client code.
+
+**Using with non-Next.js frameworks**: While Cedar-OS works with Create React App, Vite, and other React frameworks, you may need to manually configure Tailwind CSS and ensure proper client-side rendering for optimal performance.
+
+**TypeScript errors**: Cedar-OS is fully typed - check that you're importing types correctly and using the right component props.
+
+Need help? Check our [Community Discord](https://discord.gg/4AWawRjNdZ) or [GitHub Issues](https://github.com/cedar-os/cedar/issues). We're always here to help :-D
 
 
 # Cedar-OS Demos
