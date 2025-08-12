@@ -21,6 +21,7 @@ from .tools.get_relevant_feature import GetRelevantFeatureTool
 from .tools.clarify_requirements import ClarifyRequirementsTool
 from .tools.confirm_requirements import ConfirmRequirementsTool
 from .tools.check_install import CheckInstallTool
+from .tools.voice_specialist import VoiceSpecialistTool
 from .shared import GROUNDING_CONFIG, DEFAULT_INSTALL_COMMAND
 
 
@@ -33,7 +34,8 @@ class CedarModularMCPServer:
     - getRelevantFeature: map a user goal to relevant Cedar features
     - clarifyRequirements: comprehensive structured requirement gathering
     - confirmRequirements: validate requirements and generate implementation plan
-
+    - voiceSpecialist: specialized tool for Cedar-OS Voice feature development
+    
     Prompts and execution are separated. Services perform execution;
     prompts build structured content used by those services.
     """
@@ -65,6 +67,7 @@ class CedarModularMCPServer:
         clarify_tool = ClarifyRequirementsTool(self.requirements_clarifier)
         confirm_tool = ConfirmRequirementsTool(self.requirements_clarifier)
         check_install_tool = CheckInstallTool()
+        voice_tool = VoiceSpecialistTool(self.docs_index)
 
         self.tool_handlers = {
             search_tool.name: search_tool,
@@ -72,6 +75,7 @@ class CedarModularMCPServer:
             clarify_tool.name: clarify_tool,
             confirm_tool.name: confirm_tool,
             check_install_tool.name: check_install_tool,
+            voice_tool.name: voice_tool,
         }
 
     def _setup_handlers(self) -> None:
@@ -96,12 +100,13 @@ class CedarModularMCPServer:
         @self.server.call_tool()
         async def handle_call_tool(name: str, arguments: Dict[str, Any]) -> List[types.TextContent]:
             try:
-                # Enforce requirements gate for all tools except clarify/confirm, checkInstall, and the integration wizard/searchDocs
+                # Enforce requirements gate for all tools except clarify/confirm, checkInstall, voiceSpecialist, and the integration wizard/searchDocs
                 allowed_preconfirm = {
                     "clarifyRequirements",
                     "confirmRequirements",
                     "searchDocs",
                     "checkInstall",  # Always allow install checking
+                    "voiceSpecialist",  # Always allow voice development assistance
                 }
                 if name not in allowed_preconfirm and not self._requirements_confirmed:
                     message = {

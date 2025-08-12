@@ -45,7 +45,10 @@ class ClarifyRequirementsTool:
         }
         
         # Build comprehensive checklist including structured question IDs
-        checklist = self.clarifier.get_checklist()
+        checklist_items = self.clarifier.get_checklist()
+        # Convert list to dict keyed by ID
+        checklist = {item["id"]: item.get("detected", False) for item in checklist_items}
+        # Add structured question IDs
         for q in SETUP_QUESTIONS + FEATURE_QUESTIONS:
             checklist[q["id"]] = False
             
