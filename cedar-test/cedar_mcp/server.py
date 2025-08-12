@@ -14,9 +14,11 @@ from pydantic import AnyUrl
 load_dotenv()
 
 from .services.docs import DocsIndex
+from .services.mastra_docs import MastraDocsIndex
 from .services.feature import FeatureResolver
 from .services.clarify import RequirementsClarifier
 from .tools.search_docs import SearchDocsTool
+from .tools.search_mastra_docs import SearchMastraDocsTool
 from .tools.get_relevant_feature import GetRelevantFeatureTool
 from .tools.clarify_requirements import ClarifyRequirementsTool
 from .tools.confirm_requirements import ConfirmRequirementsTool
@@ -31,6 +33,7 @@ logger = logging.getLogger(__name__)
 class CedarModularMCPServer:
     """MCP Server exposing modular tools:
     - searchDocs: query Cedar-OS docs
+    - searchMastraDocs: query Mastra backend documentation
     - getRelevantFeature: map a user goal to relevant Cedar features
     - clarifyRequirements: comprehensive structured requirement gathering
     - confirmRequirements: validate requirements and generate implementation plan
@@ -40,7 +43,7 @@ class CedarModularMCPServer:
     prompts build structured content used by those services.
     """
 
-    def __init__(self, docs_path: Optional[str] = None) -> None:
+    def __init__(self, docs_path: Optional[str] = None, mastra_docs_path: Optional[str] = None) -> None:
         self.server = Server("cedar-modular-mcp")
         # Prefer explicit arg, then env, then local bundled cedar_llms_full.txt
         resolved_docs_path = (
@@ -48,9 +51,16 @@ class CedarModularMCPServer:
             or os.getenv("CEDAR_DOCS_PATH")
             or self._default_docs_path()
         )
+        # Resolve Mastra docs path
+        resolved_mastra_docs_path = (
+            mastra_docs_path
+            or os.getenv("MASTRA_DOCS_PATH")
+            or self._default_mastra_docs_path()
+        )
         # Enable semantic search if Supabase credentials are available
         enable_semantic = bool(os.getenv("SUPABASE_URL") and os.getenv("SUPABASE_KEY"))
         self.docs_index = DocsIndex(resolved_docs_path, enable_semantic_search=enable_semantic)
+        self.mastra_docs_index = MastraDocsIndex(resolved_mastra_docs_path)
         self.feature_resolver = FeatureResolver(self.docs_index)
         self.requirements_clarifier = RequirementsClarifier(self.docs_index)
         # Gate: require confirmRequirements to pass before other tools
@@ -63,6 +73,7 @@ class CedarModularMCPServer:
     def _init_tools(self) -> None:
         """Instantiate tool handlers and register name → handler mapping."""
         search_tool = SearchDocsTool(self.docs_index)
+        mastra_search_tool = SearchMastraDocsTool(self.mastra_docs_index)
         feature_tool = GetRelevantFeatureTool(self.feature_resolver)
         clarify_tool = ClarifyRequirementsTool(self.requirements_clarifier)
         confirm_tool = ConfirmRequirementsTool(self.requirements_clarifier)
@@ -71,6 +82,7 @@ class CedarModularMCPServer:
 
         self.tool_handlers = {
             search_tool.name: search_tool,
+            mastra_search_tool.name: mastra_search_tool,
             feature_tool.name: feature_tool,
             clarify_tool.name: clarify_tool,
             confirm_tool.name: confirm_tool,
@@ -100,11 +112,12 @@ class CedarModularMCPServer:
         @self.server.call_tool()
         async def handle_call_tool(name: str, arguments: Dict[str, Any]) -> List[types.TextContent]:
             try:
-                # Enforce requirements gate for all tools except clarify/confirm, checkInstall, voiceSpecialist, and the integration wizard/searchDocs
+                # Enforce requirements gate for all tools except clarify/confirm, checkInstall, voiceSpecialist, and the integration wizard/searchDocs/searchMastraDocs
                 allowed_preconfirm = {
                     "clarifyRequirements",
                     "confirmRequirements",
                     "searchDocs",
+                    "searchMastraDocs",  # Always allow Mastra docs search
                     "checkInstall",  # Always allow install checking
                     "voiceSpecialist",  # Always allow voice development assistance
                 }
@@ -150,7 +163,7 @@ class CedarModularMCPServer:
 
                 # If tool returns no citations and is docs-related, append a guard note
                 try:
-                    if name in {"searchDocs", "getRelevantFeature"}:
+                    if name in {"searchDocs", "searchMastraDocs", "getRelevantFeature"}:
                         enriched = []
                         for item in result:
                             payload = json.loads(item.text) if item.text else {}
@@ -173,6 +186,12 @@ class CedarModularMCPServer:
                     name="Cedar Docs",
                     description="Indexed Cedar-OS documentation",
                     mimeType="application/json",
+                ),
+                types.Resource(
+                    uri=AnyUrl("mastra://docs"),
+                    name="Mastra Docs",
+                    description="Indexed Mastra backend documentation",
+                    mimeType="application/json",
                 )
             ]
 
@@ -180,6 +199,9 @@ class CedarModularMCPServer:
         async def handle_read_resource(uri: AnyUrl) -> str:  # type: ignore
             if str(uri) == "cedar://docs":
                 meta = self.docs_index.describe()
+                return json.dumps(meta, indent=2)
+            elif str(uri) == "mastra://docs":
+                meta = self.mastra_docs_index.describe()
                 return json.dumps(meta, indent=2)
             raise ValueError(f"Unknown resource: {uri}")
 
@@ -189,6 +211,17 @@ class CedarModularMCPServer:
             here = os.path.dirname(os.path.abspath(__file__))
             root = os.path.abspath(os.path.join(here, os.pardir))
             candidate = os.path.join(root, "docs", "cedar_llms_full.txt")
+            return candidate if os.path.exists(candidate) else None
+        except Exception:
+            return None
+    
+    def _default_mastra_docs_path(self) -> Optional[str]:
+        """Resolve the mastra_llms_full.txt as a default Mastra docs source."""
+        try:
+            here = os.path.dirname(os.path.abspath(__file__))
+            root = os.path.abspath(os.path.join(here, os.pardir))
+            # Look for the Mastra docs in docs/ (same location as cedar_llms_full.txt)
+            candidate = os.path.join(root, "docs", "mastra_llms_full.txt")
             return candidate if os.path.exists(candidate) else None
         except Exception:
             return None
