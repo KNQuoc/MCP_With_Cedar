@@ -2,10 +2,24 @@
 
 Modular MCP server for Cedar-OS with clean separation between prompts and execution.
 
+### Important Context for AI Agents
+
+**Cedar CLI creates COMPLETE projects!** The `npx cedar-os-cli plant-seed` command doesn't just install packages - it creates a full working application with:
+- Demo frontend (Next.js/React) with Cedar pre-integrated
+- Mastra backend already initialized with Cedar-OS
+- All Cedar packages and dependencies pre-installed
+- Working example components and configuration
+
+**DO NOT** create a Next.js project first - plant-seed handles everything!
+
 ### Features
+- **checkInstall**: CRITICAL - validates package installations and ensures Cedar CLI is used first
 - **searchDocs**: query embedded Cedar-OS docs (and optionally local docs) and return relevant chunks with citations
+- **searchMastraDocs**: query Mastra backend documentation
 - **getRelevantFeature**: map a goal/context to relevant Cedar-OS features
 - **clarifyRequirements**: propose concise clarifying questions
+- **confirmRequirements**: validate requirements and generate implementation plan
+- **voiceSpecialist**: specialized tool for Cedar-OS Voice feature development
 
 ### Quick Start
 ```bash

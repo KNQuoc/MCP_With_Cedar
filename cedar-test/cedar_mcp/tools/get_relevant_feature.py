@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional
 from mcp.types import Tool as McpTool, TextContent
 
 from ..services.feature import FeatureResolver
-from ..shared import DEFAULT_INSTALL_COMMAND
+from ..shared import DEFAULT_INSTALL_COMMAND, format_tool_output
 
 
 class GetRelevantFeatureTool:
@@ -41,8 +41,9 @@ class GetRelevantFeatureTool:
             "with the feature name to verify presence. If none found, mark as 'not in docs'. "
             f"Use '{DEFAULT_INSTALL_COMMAND}' as the default install command unless the user specifies another."
         )
-        payload = {"prompt": prompt, "directive": directive, "features": mapping}
-        return [TextContent(type="text", text=json.dumps(payload, indent=2))]
+        full_payload = {"prompt": prompt, "directive": directive, "features": mapping}
+        formatted = format_tool_output(full_payload, keep_fields=["features"])
+        return [TextContent(type="text", text=json.dumps(formatted, indent=2))]
 
     @staticmethod
     def _build_prompt(goal: str, context: Optional[str]) -> str:

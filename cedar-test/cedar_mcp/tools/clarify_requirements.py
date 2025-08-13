@@ -6,7 +6,7 @@ from typing import Any, Dict, List
 from mcp.types import Tool as McpTool, TextContent
 
 from ..services.clarify import RequirementsClarifier
-from ..shared import CLARIFY_GUIDANCE, SETUP_QUESTIONS, FEATURE_QUESTIONS
+from ..shared import CLARIFY_GUIDANCE, SETUP_QUESTIONS, FEATURE_QUESTIONS, format_tool_output
 
 
 class ClarifyRequirementsTool:
@@ -52,14 +52,15 @@ class ClarifyRequirementsTool:
         for q in SETUP_QUESTIONS + FEATURE_QUESTIONS:
             checklist[q["id"]] = False
             
-        payload: Dict[str, Any] = {
+        full_payload: Dict[str, Any] = {
             "prompt": prompt,
             "guidance": CLARIFY_GUIDANCE,
             "questions": all_questions,
             "checklist": checklist,
             "structured_questions": SETUP_QUESTIONS + FEATURE_QUESTIONS,
         }
-        return [TextContent(type="text", text=json.dumps(payload, indent=2))]
+        formatted = format_tool_output(full_payload, keep_fields=["questions", "checklist", "structured_questions"])
+        return [TextContent(type="text", text=json.dumps(formatted, indent=2))]
 
     @staticmethod
     def _build_prompt(goal: str, known_constraints: List[str]) -> str:

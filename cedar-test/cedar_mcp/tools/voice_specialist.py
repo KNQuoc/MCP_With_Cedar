@@ -6,58 +6,32 @@ from typing import Any, Dict, List
 from mcp.types import Tool as McpTool, TextContent
 
 from ..services.docs import DocsIndex
+from ..shared import format_tool_output
 
 
 class VoiceSpecialistTool:
-    """Specialized tool for Cedar-OS Voice feature development"""
+    """Modular voice development assistant that leverages documentation search"""
     
     name = "voiceSpecialist"
     
-    # Voice-specific keywords for focused search (from Cedar docs)
-    VOICE_KEYWORDS = [
-        "voice", "voicestate", "voiceindicator", "microphone", "mic",
-        "speech", "audio", "recording", "transcription", "realtime",
-        "whisper", "voicebutton", "voicestatuspanel", "voicesettings",
-        "islistening", "isspeaking", "voicepermissionstatus", "voiceendpoint",
-        "startlistening", "stoplistening", "togglevoice", "updatevoicesettings",
-        "voiceerror", "voicewaveform", "voice toggle", "voice interface"
-    ]
+    # Core voice-related search terms for documentation
+    VOICE_SEARCH_TERMS = {
+        "components": ["VoiceIndicator", "VoiceButton", "VoiceSettings", "VoiceStatusPanel", "VoiceWaveform", "ChatInput"],
+        "features": ["voice", "microphone", "audio", "recording", "transcription", "speech", "whisper", "realtime"],
+        "states": ["isListening", "isSpeaking", "voicePermissionStatus", "voiceError", "transcription"],
+        "methods": ["toggleVoice", "startListening", "stopListening", "requestMicrophonePermission", "updateVoiceSettings"],
+        "permissions": ["granted", "denied", "not-supported", "prompt"],
+        "integration": ["WebRTC", "OpenAI", "TTS", "STT", "WebSocket", "voice endpoint"]
+    }
     
-    # Common voice implementation patterns (from Cedar docs)
-    VOICE_PATTERNS = {
-        "basic_setup": """
-// Basic Voice Setup Pattern (from Cedar docs)
-1. Install Cedar-OS using 'npx cedar-os-cli plant-seed'
-2. Voice features work automatically in ChatInput
-3. Press 'M' key to toggle voice (when not typing)
-4. Mic button shows red pulsing when recording
-5. VoiceIndicator appears when voice.isListening is true
-""",
-        "voice_button": """
-// Voice Button States (from Cedar docs)
-- Red pulsing animation when recording (voice.isListening)
-- Green color when playing AI response (voice.isSpeaking)  
-- Gray/disabled when permissions denied
-- Automatic permission request on first use
-- Built into ChatInput component by default
-""",
-        "voice_indicator": """
-// VoiceIndicator Component (from Cedar docs)
-- Import from '@cedar/voice'
-- Pass voiceState prop from useCedarStore
-- Shows smooth animated bars powered by Motion for React
-- Displays real-time transcription text
-- Position with className (e.g., 'absolute -top-12 right-0')
-""",
-        "permissions": """
-// Voice Permission States (from Cedar docs)
-- 'granted': Microphone access allowed
-- 'denied': User blocked microphone access
-- 'not-supported': Browser doesn't support voice
-- 'prompt': Permission not yet requested
-- ChatInput handles permissions automatically
-- Use voice.requestMicrophonePermission() for manual control
-"""
+    # High-level guidance categories
+    GUIDANCE_CATEGORIES = {
+        "setup": "Installation and initial configuration of voice features",
+        "components": "Voice UI components and their usage",
+        "permissions": "Microphone permissions and browser compatibility",
+        "integration": "Backend integration and API configuration",
+        "troubleshooting": "Common issues and debugging approaches",
+        "patterns": "Implementation patterns and best practices"
     }
     
     def __init__(self, docs_index: DocsIndex) -> None:
@@ -66,462 +40,500 @@ class VoiceSpecialistTool:
     def list_tool(self) -> McpTool:
         return McpTool(
             name=self.name,
-            description="Specialized tool for Cedar-OS Voice feature development - searches voice docs, provides implementation patterns, and guides voice integration",
+            description="Voice development assistant - searches documentation and provides guidance for voice feature implementation",
             inputSchema={
                 "type": "object",
                 "properties": {
                     "action": {
                         "type": "string",
-                        "enum": ["search", "implement", "troubleshoot", "patterns"],
-                        "description": "Action to perform: search docs, get implementation guide, troubleshoot issues, or get patterns"
+                        "enum": ["search", "guide", "troubleshoot", "explore"],
+                        "description": "Action: search docs, get implementation guide, troubleshoot issue, or explore voice features"
                     },
                     "query": {
                         "type": "string",
-                        "description": "Specific voice-related query or component name"
+                        "description": "Your specific question or search query about voice features"
                     },
-                    "component": {
+                    "focus": {
                         "type": "string",
-                        "enum": ["VoiceIndicator", "VoiceButton", "VoiceSettings", "VoiceStatusPanel", "VoiceWaveform", "ChatInput", "general"],
-                        "description": "Specific voice component to focus on"
-                    },
-                    "framework": {
-                        "type": "string",
-                        "enum": ["nextjs", "react", "vue", "vanilla"],
-                        "default": "nextjs",
-                        "description": "Target framework for implementation"
+                        "enum": ["components", "permissions", "integration", "setup", "general"],
+                        "default": "general",
+                        "description": "Area to focus the search on"
                     }
                 },
-                "required": ["action"]
+                "required": ["action", "query"]
             }
         )
     
     async def handle(self, arguments: Dict[str, Any]) -> List[TextContent]:
         action = arguments.get("action", "search")
         query = arguments.get("query", "")
-        component = arguments.get("component", "general")
-        framework = arguments.get("framework", "nextjs")
+        focus = arguments.get("focus", "general")
         
         if action == "search":
-            return await self._search_voice_docs(query, component)
-        elif action == "implement":
-            return await self._get_implementation_guide(component, framework, query)
+            return await self._search_voice_documentation(query, focus)
+        elif action == "guide":
+            return await self._provide_implementation_guide(query, focus)
         elif action == "troubleshoot":
-            return await self._troubleshoot_voice_issue(query, component)
-        elif action == "patterns":
-            return self._get_voice_patterns(component)
+            return await self._help_troubleshoot(query, focus)
+        elif action == "explore":
+            return await self._explore_voice_features(query, focus)
         else:
             return [TextContent(type="text", text=json.dumps({"error": f"Unknown action: {action}"}))]
     
-    async def _search_voice_docs(self, query: str, component: str) -> List[TextContent]:
-        """Search specifically for voice-related documentation"""
-        # Enhance query with voice-specific terms
-        enhanced_query = query
-        if component != "general":
-            enhanced_query = f"{component} {query}"
+    async def _search_voice_documentation(self, query: str, focus: str) -> List[TextContent]:
+        """Search documentation with voice-specific context"""
         
-        # Add voice context to query
-        voice_query = f"voice {enhanced_query} microphone audio recording transcription"
+        # Build enhanced search query based on focus area
+        search_terms = self._build_search_query(query, focus)
         
-        # Search with both semantic and keyword matching
-        results = await self.docs_index.search(voice_query, limit=10, use_semantic=True)
+        # Perform documentation search
+        results = await self.docs_index.search(search_terms, limit=8, use_semantic=True)
         
-        # Filter results to prioritize voice-specific content
-        voice_results = []
-        for result in results:
-            content_lower = result.get("content", "").lower()
-            heading_lower = result.get("heading", "").lower()
-            
-            # Check if result is voice-related
-            if any(keyword in content_lower or keyword in heading_lower 
-                   for keyword in self.VOICE_KEYWORDS):
-                voice_results.append(result)
+        # Filter and rank results based on voice relevance
+        voice_results = self._filter_voice_results(results)
         
-        # If no voice-specific results, include general results
-        if not voice_results:
-            voice_results = results[:5]
-        
-        payload = {
+        # Build response with guidance
+        full_payload = {
             "action": "search",
-            "component": component,
             "query": query,
-            "results": voice_results[:7],  # Return top 7 voice-specific results
-            "guidance": self._get_voice_guidance(component),
-            "keywords_used": self.VOICE_KEYWORDS[:10]
+            "focus": focus,
+            "search_terms_used": search_terms,
+            "results": voice_results,
+            "guidance": self._get_contextual_guidance(query, focus),
+            "related_topics": self._suggest_related_topics(query, focus),
+            "next_steps": self._suggest_next_steps(voice_results, focus)
         }
         
-        return [TextContent(type="text", text=json.dumps(payload, indent=2))]
+        formatted = format_tool_output(full_payload, keep_fields=["results", "related_topics"])
+        return [TextContent(type="text", text=json.dumps(formatted, indent=2))]
     
-    async def _get_implementation_guide(self, component: str, framework: str, query: str) -> List[TextContent]:
-        """Get implementation guide for voice features"""
-        # Search for relevant examples
-        search_query = f"{component} {framework} implementation example code"
+    async def _provide_implementation_guide(self, query: str, focus: str) -> List[TextContent]:
+        """Provide implementation guidance based on documentation"""
+        
+        # Search for implementation examples and patterns
+        search_query = f"{query} implementation example code setup configuration"
         docs_results = await self.docs_index.search(search_query, limit=5, use_semantic=True)
         
-        # Build implementation steps
-        implementation_steps = self._build_implementation_steps(component, framework)
-        
-        # Get relevant patterns
-        patterns = self.VOICE_PATTERNS.get("basic_setup", "")
-        if component == "VoiceIndicator":
-            patterns = self.VOICE_PATTERNS.get("voice_indicator", "")
-        elif component == "VoiceButton":
-            patterns = self.VOICE_PATTERNS.get("voice_button", "")
-        
-        payload = {
-            "action": "implement",
-            "component": component,
-            "framework": framework,
-            "steps": implementation_steps,
-            "patterns": patterns,
-            "examples": docs_results[:3],
-            "imports": self._get_voice_imports(component, framework),
-            "configuration": self._get_voice_config(component),
-            "common_issues": self._get_common_voice_issues(component)
+        # Build implementation guidance
+        full_payload = {
+            "action": "guide",
+            "topic": query,
+            "focus": focus,
+            "overview": self._get_implementation_overview(query, focus),
+            "documentation": docs_results,
+            "key_concepts": self._identify_key_concepts(query, focus),
+            "search_suggestions": self._get_search_suggestions(query, focus),
+            "common_patterns": self._suggest_common_patterns(focus),
+            "checklist": self._create_implementation_checklist(query, focus)
         }
         
-        return [TextContent(type="text", text=json.dumps(payload, indent=2))]
+        formatted = format_tool_output(full_payload, keep_fields=["documentation", "checklist", "key_concepts"])
+        return [TextContent(type="text", text=json.dumps(formatted, indent=2))]
     
-    async def _troubleshoot_voice_issue(self, query: str, component: str) -> List[TextContent]:
-        """Troubleshoot voice-related issues"""
-        # Search for error-related documentation
-        error_query = f"voice error {query} troubleshoot fix issue problem"
+    async def _help_troubleshoot(self, query: str, focus: str) -> List[TextContent]:
+        """Help troubleshoot voice-related issues"""
+        
+        # Search for error and troubleshooting documentation
+        error_query = f"{query} error troubleshoot fix issue problem solution"
         docs_results = await self.docs_index.search(error_query, limit=5, use_semantic=True)
         
-        # Get common solutions
-        solutions = self._get_voice_solutions(query, component)
-        
-        payload = {
+        # Analyze the issue and provide troubleshooting guidance
+        full_payload = {
             "action": "troubleshoot",
             "issue": query,
-            "component": component,
-            "potential_causes": self._analyze_voice_issue(query),
-            "solutions": solutions,
+            "focus": focus,
+            "potential_causes": self._analyze_potential_causes(query),
             "documentation": docs_results,
-            "checklist": self._get_troubleshooting_checklist(component),
-            "debugging_tips": self._get_debugging_tips()
-        }
-        
-        return [TextContent(type="text", text=json.dumps(payload, indent=2))]
-    
-    def _get_voice_patterns(self, component: str) -> List[TextContent]:
-        """Get voice implementation patterns"""
-        patterns = {}
-        
-        if component == "general" or component == "ChatInput":
-            patterns = self.VOICE_PATTERNS
-        else:
-            # Get specific pattern for component
-            pattern_key = {
-                "VoiceIndicator": "voice_indicator",
-                "VoiceButton": "voice_button",
-                "VoiceSettings": "basic_setup",
-                "VoiceStatus": "permissions"
-            }.get(component, "basic_setup")
-            patterns = {pattern_key: self.VOICE_PATTERNS.get(pattern_key, "")}
-        
-        payload = {
-            "action": "patterns",
-            "component": component,
-            "patterns": patterns,
-            "usage_examples": self._get_pattern_examples(component)
-        }
-        
-        return [TextContent(type="text", text=json.dumps(payload, indent=2))]
-    
-    def _get_voice_guidance(self, component: str) -> str:
-        """Get component-specific guidance"""
-        guidance_map = {
-            "VoiceIndicator": "Visual feedback component showing voice activity with smooth animations powered by Motion for React. Shows animated bars when listening.",
-            "VoiceButton": "Microphone toggle button that changes appearance based on voice state. Handles permissions and provides visual feedback (red pulsing when recording, green when playing).",
-            "VoiceSettings": "Configuration panel for voice preferences including language, voice model, rate, volume, and TTS options.",
-            "VoiceStatusPanel": "Comprehensive status panel showing all voice information including permissions, connection state, and error messages.",
-            "VoiceWaveform": "Audio waveform visualizer component for real-time voice visualization.",
-            "ChatInput": "ChatInput automatically includes voice features - mic button, keyboard shortcut (M key), and VoiceIndicator integration.",
-            "general": "Cedar Voice provides WebRTC-based real-time audio with OpenAI integration for transcription (Whisper) and TTS."
-        }
-        return guidance_map.get(component, guidance_map["general"])
-    
-    def _build_implementation_steps(self, component: str, framework: str) -> List[str]:
-        """Build implementation steps for a component"""
-        base_steps = [
-            "Install Cedar-OS using 'npx cedar-os-cli plant-seed'",
-            "Configure voice endpoint in your environment",
-            "Set up OpenAI API key for voice services",
-        ]
-        
-        component_steps = {
-            "VoiceIndicator": [
-                "Import VoiceIndicator from '@cedar/voice'",
-                "Pass voiceState prop from useCedarStore",
-                "Component shows animated bars when isListening is true",
-                "Displays transcription text in real-time",
-                "Add className for positioning (e.g., 'absolute -top-12 right-0')"
+            "diagnostic_steps": self._get_diagnostic_steps(query, focus),
+            "common_solutions": self._get_common_solutions(query),
+            "search_suggestions": [
+                f"voice {term}" for term in self._extract_error_keywords(query)
             ],
-            "VoiceButton": [
-                "Import VoiceButton component or use ChatInput's built-in button",
-                "Button automatically handles voice.toggleVoice()",
-                "Shows red pulsing animation when recording",
-                "Shows green color when playing AI response",
-                "Disabled state when permissions denied",
-                "M key shortcut works automatically in ChatInput"
-            ],
-            "VoiceSettings": [
-                "Import VoiceSettings component",
-                "Connect to voice.voiceSettings from useCedarStore",
-                "Language selection (en-US, en-GB, es-ES, fr-FR, etc.)",
-                "Voice model selection (alloy, echo, fable, onyx, nova, shimmer)",
-                "Rate control (0.25 to 4.0) and volume control (0 to 1)",
-                "Toggle options: autoAddToMessages, useBrowserTTS"
-            ],
-            "ChatInput": [
-                "Use Cedar's ChatInput component",
-                "Voice features are included automatically",
-                "Configure voice endpoint",
-                "Customize mic button appearance if needed"
-            ]
+            "debugging_approach": self._suggest_debugging_approach(focus)
         }
         
-        return base_steps + component_steps.get(component, [
-            "Import voice components from Cedar",
-            "Configure voice state management",
-            "Add UI components for voice interaction"
-        ])
+        formatted = format_tool_output(full_payload, keep_fields=["documentation", "common_solutions", "diagnostic_steps"])
+        return [TextContent(type="text", text=json.dumps(formatted, indent=2))]
     
-    def _get_voice_imports(self, component: str, framework: str) -> Dict[str, str]:
-        """Get required imports for voice features"""
-        imports = {
-            "cedar_core": "import { useCedarStore } from '@cedar/core';",
-            "voice_components": f"import {{ {component} }} from '@cedar/voice';" if component not in ["general", "ChatInput"] else "import { VoiceIndicator } from '@cedar/voice';",
-            "chat_input": "import { ChatInput } from 'cedar-os-components';",
-            "types": "import type { VoiceState, VoiceSettings } from '@cedar/types';",
-            "hooks": "import { useVoice } from 'cedar-os';",
-            "icons": "import { Mic, MicOff, Volume2, Settings } from 'lucide-react';" if component in ["VoiceButton", "VoiceStatusPanel"] else ""
+    async def _explore_voice_features(self, query: str, focus: str) -> List[TextContent]:
+        """Explore voice features and capabilities"""
+        
+        # Broad search to explore voice features
+        explore_query = f"voice {query} features capabilities components"
+        docs_results = await self.docs_index.search(explore_query, limit=10, use_semantic=True)
+        
+        full_payload = {
+            "action": "explore",
+            "topic": query,
+            "focus": focus,
+            "available_features": self._list_available_features(focus),
+            "documentation": docs_results,
+            "component_categories": self._get_component_categories(),
+            "integration_points": self._get_integration_points(),
+            "learning_path": self._suggest_learning_path(query, focus)
         }
         
-        if framework == "nextjs":
-            imports["client"] = "'use client'; // Required for Next.js App Router"
-        
-        return imports
+        formatted = format_tool_output(full_payload, keep_fields=["documentation", "available_features", "learning_path"])
+        return [TextContent(type="text", text=json.dumps(formatted, indent=2))]
     
-    def _get_voice_config(self, component: str) -> Dict[str, Any]:
-        """Get voice configuration requirements"""
-        return {
-            "environment": {
-                "OPENAI_API_KEY": "Required for transcription and voice synthesis",
-                "VOICE_ENDPOINT": "WebSocket endpoint for real-time voice (optional)",
-                "VOICE_MODEL": "OpenAI transcription model (default: whisper-1)"
-            },
-            "permissions": {
-                "microphone": "Required - will prompt user automatically",
-                "autoplay": "Recommended for voice responses"
-            },
-            "browser_support": {
-                "chrome": "Full support",
-                "firefox": "Full support", 
-                "safari": "Requires user interaction for first audio playback",
-                "edge": "Full support"
-            }
+    def _build_search_query(self, base_query: str, focus: str) -> str:
+        """Build an enhanced search query based on focus area"""
+        focus_terms = {
+            "components": " ".join(self.VOICE_SEARCH_TERMS["components"][:3]),
+            "permissions": "microphone permission getUserMedia browser",
+            "integration": "WebSocket API endpoint OpenAI configuration",
+            "setup": "install cedar plant-seed voice configuration",
+            "general": "voice audio microphone"
         }
+        
+        additional_terms = focus_terms.get(focus, "voice")
+        return f"{base_query} {additional_terms}"
     
-    def _get_common_voice_issues(self, component: str) -> List[Dict[str, str]]:
-        """Get common issues and solutions"""
-        issues = [
-            {
-                "issue": "Microphone permission denied",
-                "solution": "Check browser settings, ensure HTTPS, handle permission denial in UI"
-            },
-            {
-                "issue": "Voice not working in Safari",
-                "solution": "Ensure user interaction before audio playback, check autoplay policies"
-            },
-            {
-                "issue": "No audio input detected",
-                "solution": "Check microphone selection, verify MediaStream constraints"
-            },
-            {
-                "issue": "Voice endpoint connection failed",
-                "solution": "Verify WebSocket URL, check CORS settings, ensure SSL for production"
-            }
-        ]
+    def _filter_voice_results(self, results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Filter and prioritize voice-related results"""
+        voice_results = []
+        other_results = []
         
-        if component == "VoiceIndicator":
-            issues.append({
-                "issue": "Animation not showing",
-                "solution": "Check voice.isListening state, verify CSS animations are loaded"
-            })
+        for result in results:
+            # Safely get content and heading with default empty strings
+            content_str = str(result.get("content", "") or "")
+            heading_str = str(result.get("heading", "") or "")
+            content = (content_str + " " + heading_str).lower()
+            
+            # Check for voice-related content
+            voice_score = sum(
+                1 for category in self.VOICE_SEARCH_TERMS.values()
+                for term in category
+                if term.lower() in content
+            )
+            
+            if voice_score > 0:
+                result["voice_relevance"] = voice_score
+                voice_results.append(result)
+            else:
+                other_results.append(result)
         
-        return issues
+        # Sort by voice relevance
+        voice_results.sort(key=lambda x: x.get("voice_relevance", 0), reverse=True)
+        
+        # Return voice results first, then others
+        return voice_results[:7] + other_results[:3]
     
-    def _analyze_voice_issue(self, query: str) -> List[str]:
-        """Analyze potential causes of voice issues"""
-        query_lower = query.lower()
-        causes = []
-        
-        if "permission" in query_lower or "denied" in query_lower:
-            causes.append("Microphone permissions not granted")
-            causes.append("Browser security policies blocking access")
-            causes.append("Not using HTTPS in production")
-        
-        if "not working" in query_lower or "doesn't work" in query_lower:
-            causes.append("Voice endpoint not configured")
-            causes.append("API keys missing or invalid")
-            causes.append("Browser compatibility issues")
-            causes.append("Component not properly imported")
-        
-        if "no sound" in query_lower or "audio" in query_lower:
-            causes.append("Audio output device issues")
-            causes.append("Browser autoplay policies")
-            causes.append("Volume settings muted")
-        
-        if not causes:
-            causes = ["Configuration issue", "State management problem", "Network connectivity"]
-        
-        return causes
-    
-    def _get_voice_solutions(self, query: str, component: str) -> List[str]:
-        """Get solutions for voice issues"""
-        solutions = [
-            "Verify Cedar-OS is properly installed with 'npx cedar-os-cli plant-seed'",
-            "Check browser console for specific error messages",
-            "Ensure all required environment variables are set"
-        ]
-        
+    def _get_contextual_guidance(self, query: str, focus: str) -> str:
+        """Provide contextual guidance based on query and focus"""
         query_lower = query.lower()
         
         if "permission" in query_lower:
-            solutions.extend([
-                "Add permission request handling before voice activation",
-                "Provide clear UI feedback when permissions are denied",
-                "Test in incognito mode to reset permissions"
-            ])
+            return "Voice features require microphone permissions. Cedar handles this automatically in ChatInput, but you can also manage permissions manually with requestMicrophonePermission()."
+        elif "not working" in query_lower or "error" in query_lower:
+            return "Check browser console for errors, verify HTTPS is used, ensure OpenAI API key is configured, and confirm microphone permissions are granted."
+        elif "setup" in query_lower or "install" in query_lower:
+            return "Use 'npx cedar-os-cli plant-seed' to set up Cedar with voice features. Voice works automatically in ChatInput component."
+        elif focus == "components":
+            return "Cedar provides VoiceIndicator for visual feedback, VoiceButton for controls, and ChatInput with built-in voice. Search docs for specific component examples."
+        elif focus == "integration":
+            return "Voice requires OpenAI API key for transcription (Whisper) and TTS. Configure endpoint for real-time WebRTC voice if needed."
+        else:
+            return "Cedar's voice features include automatic transcription, TTS, visual indicators, and keyboard shortcuts. Search documentation for specific implementation details."
+    
+    def _suggest_related_topics(self, query: str, focus: str) -> List[str]:
+        """Suggest related topics to explore"""
+        suggestions = []
         
-        if "websocket" in query_lower or "connection" in query_lower:
-            solutions.extend([
-                "Verify voice endpoint URL is correct",
-                "Check WebSocket connection in Network tab",
-                "Ensure backend supports WebSocket connections"
-            ])
+        # Base suggestions on focus
+        if focus == "components":
+            suggestions = ["VoiceIndicator usage", "ChatInput voice integration", "Custom voice buttons"]
+        elif focus == "permissions":
+            suggestions = ["Browser compatibility", "HTTPS requirements", "Permission handling"]
+        elif focus == "integration":
+            suggestions = ["OpenAI configuration", "WebSocket setup", "Voice endpoints"]
+        else:
+            suggestions = ["Voice components", "Permission handling", "Backend setup"]
         
+        # Add query-specific suggestions
+        query_lower = query.lower()
+        if "indicator" in query_lower:
+            suggestions.append("VoiceIndicator animations")
+        if "button" in query_lower:
+            suggestions.append("Voice button states")
+        if "error" in query_lower:
+            suggestions.append("Troubleshooting voice issues")
+            
+        return suggestions[:5]
+    
+    def _suggest_next_steps(self, results: List[Dict[str, Any]], focus: str) -> List[str]:
+        """Suggest next steps based on search results"""
+        if not results:
+            return [
+                "Try searching with different keywords",
+                "Explore voice components documentation",
+                "Check the Cedar Voice overview"
+            ]
+        
+        steps = []
+        if focus == "setup":
+            steps = [
+                "Run 'npx cedar-os-cli plant-seed' to install Cedar",
+                "Configure OpenAI API key",
+                "Test voice in ChatInput component"
+            ]
+        elif focus == "components":
+            steps = [
+                "Review component documentation",
+                "Check implementation examples",
+                "Test component in your application"
+            ]
+        else:
+            steps = [
+                "Review the documentation results",
+                "Try the suggested search terms",
+                "Explore related topics"
+            ]
+            
+        return steps
+    
+    def _get_implementation_overview(self, query: str, focus: str) -> str:
+        """Provide implementation overview"""
+        overviews = {
+            "components": "Cedar voice components are React components that integrate with the Cedar store. Import from '@cedar/voice' and use with useCedarStore hook.",
+            "permissions": "Microphone permissions are handled automatically by ChatInput. For custom implementations, use voice.requestMicrophonePermission().",
+            "integration": "Voice requires OpenAI API key. Configure in environment variables. Optional WebSocket endpoint for real-time voice.",
+            "setup": "Install Cedar with 'npx cedar-os-cli plant-seed'. Voice features work out-of-the-box in ChatInput component.",
+            "general": "Cedar provides complete voice solution with UI components, state management, and backend integration."
+        }
+        return overviews.get(focus, overviews["general"])
+    
+    def _identify_key_concepts(self, query: str, focus: str) -> List[str]:
+        """Identify key concepts to understand"""
+        concepts = {
+            "components": ["Voice state management", "Component props", "Event handling", "Visual feedback"],
+            "permissions": ["getUserMedia API", "Browser compatibility", "HTTPS requirement", "Permission states"],
+            "integration": ["OpenAI Whisper", "Text-to-speech", "WebSocket connections", "API configuration"],
+            "setup": ["Cedar CLI", "Environment variables", "Package installation", "Initial configuration"],
+            "general": ["Voice state", "Transcription", "TTS", "UI components"]
+        }
+        return concepts.get(focus, concepts["general"])
+    
+    def _get_search_suggestions(self, query: str, focus: str) -> List[str]:
+        """Get search suggestions for finding more information"""
+        base_suggestions = [
+            f"Cedar voice {focus}",
+            f"voice {query} implementation",
+            f"{query} example code"
+        ]
+        
+        # Add focus-specific suggestions
+        if focus == "components":
+            base_suggestions.extend([f"{comp} usage" for comp in self.VOICE_SEARCH_TERMS["components"][:3]])
+        elif focus == "permissions":
+            base_suggestions.extend(["microphone permission handling", "browser voice support"])
+        
+        return base_suggestions[:6]
+    
+    def _suggest_common_patterns(self, focus: str) -> List[str]:
+        """Suggest common implementation patterns"""
+        patterns = {
+            "components": [
+                "ChatInput with built-in voice",
+                "VoiceIndicator with custom positioning",
+                "Custom voice button implementation"
+            ],
+            "permissions": [
+                "Automatic permission handling",
+                "Manual permission request",
+                "Permission denial fallback"
+            ],
+            "integration": [
+                "OpenAI API configuration",
+                "WebSocket voice streaming",
+                "Error handling patterns"
+            ],
+            "general": [
+                "Basic voice setup",
+                "Voice with chat interface",
+                "Custom voice controls"
+            ]
+        }
+        return patterns.get(focus, patterns["general"])
+    
+    def _create_implementation_checklist(self, query: str, focus: str) -> List[str]:
+        """Create implementation checklist"""
+        base_checklist = [
+            "Cedar installed via plant-seed",
+            "OpenAI API key configured",
+            "HTTPS enabled (for production)",
+            "Voice components imported"
+        ]
+        
+        if focus == "components":
+            base_checklist.extend([
+                "Component rendered in UI",
+                "Voice state connected",
+                "Event handlers configured"
+            ])
+        elif focus == "permissions":
+            base_checklist.extend([
+                "Permission request handled",
+                "Permission status displayed",
+                "Fallback for denied permissions"
+            ])
+            
+        return base_checklist
+    
+    def _analyze_potential_causes(self, query: str) -> List[str]:
+        """Analyze potential causes of issues"""
+        query_lower = query.lower()
+        causes = []
+        
+        if "permission" in query_lower or "mic" in query_lower:
+            causes.extend([
+                "Microphone permissions not granted",
+                "Browser blocking microphone access",
+                "Not using HTTPS"
+            ])
+        if "not working" in query_lower or "doesn't work" in query_lower:
+            causes.extend([
+                "Missing API configuration",
+                "Component not properly imported",
+                "State not connected"
+            ])
+        if "error" in query_lower:
+            causes.extend([
+                "API key invalid or missing",
+                "Network connectivity issues",
+                "Browser compatibility problems"
+            ])
+            
+        return causes or ["Configuration issue", "Integration problem", "Component error"]
+    
+    def _extract_error_keywords(self, query: str) -> List[str]:
+        """Extract keywords from error descriptions"""
+        # Simple keyword extraction
+        words = query.lower().split()
+        keywords = []
+        
+        for word in words:
+            if len(word) > 3 and word not in ["the", "and", "not", "working", "doesn't", "won't"]:
+                keywords.append(word)
+                
+        return keywords[:5]
+    
+    def _get_diagnostic_steps(self, query: str, focus: str) -> List[str]:
+        """Get diagnostic steps for troubleshooting"""
+        steps = [
+            "Check browser console for errors",
+            "Verify Cedar is properly installed",
+            "Confirm API keys are configured"
+        ]
+        
+        if focus == "permissions":
+            steps.extend([
+                "Check browser microphone settings",
+                "Verify HTTPS is being used",
+                "Test in different browser"
+            ])
+        elif focus == "components":
+            steps.extend([
+                "Verify component is imported",
+                "Check voice state in Redux DevTools",
+                "Confirm component props"
+            ])
+            
+        return steps
+    
+    def _get_common_solutions(self, query: str) -> List[str]:
+        """Get common solutions for issues"""
+        query_lower = query.lower()
+        solutions = []
+        
+        if "permission" in query_lower:
+            solutions = [
+                "Ensure HTTPS is used",
+                "Clear browser permissions and retry",
+                "Add permission request UI"
+            ]
+        elif "api" in query_lower or "key" in query_lower:
+            solutions = [
+                "Verify OpenAI API key is valid",
+                "Check environment variable configuration",
+                "Ensure API key has proper permissions"
+            ]
+        else:
+            solutions = [
+                "Reinstall Cedar with plant-seed",
+                "Check documentation for examples",
+                "Verify all dependencies are installed"
+            ]
+            
         return solutions
     
-    def _get_troubleshooting_checklist(self, component: str) -> List[str]:
-        """Get troubleshooting checklist"""
-        return [
-            "✓ Cedar-OS installed via plant-seed command",
-            "✓ OpenAI API key configured and valid",
-            "✓ Microphone permissions granted",
-            "✓ HTTPS used in production environment",
-            "✓ Voice components properly imported",
-            "✓ useCedarStore hook connected",
-            "✓ Browser console checked for errors",
-            "✓ Network tab checked for failed requests",
-            f"✓ {component} component rendered in DOM" if component != "general" else "✓ Voice components visible in UI",
-            "✓ Voice state updates in Redux DevTools"
-        ]
-    
-    def _get_debugging_tips(self) -> List[str]:
-        """Get debugging tips for voice features"""
-        return [
-            "Use browser DevTools to monitor voice state changes",
-            "Check Network tab for WebSocket connections and API calls",
-            "Test with console.log in voice event handlers",
-            "Use Chrome's chrome://webrtc-internals for detailed audio debugging",
-            "Try the voice feature in different browsers to isolate issues",
-            "Check if voice works in Cedar's demo/playground first",
-            "Monitor the voice state with: const voice = useCedarStore(state => state.voice)"
-        ]
-    
-    def _get_pattern_examples(self, component: str) -> Dict[str, str]:
-        """Get pattern usage examples"""
-        examples = {
-            "basic": """
-// Basic voice setup in your app
-import { useCedarStore } from '@cedar/core';
-
-function VoiceComponent() {
-  const voice = useCedarStore(state => state.voice);
-  
-  // Use built-in toggle method
-  const handleVoiceToggle = () => {
-    voice.toggleVoice();
-  };
-  
-  // Or control manually
-  const startRecording = () => {
-    if (!voice.isListening) {
-      voice.startListening();
-    }
-  };
-  
-  const stopRecording = () => {
-    if (voice.isListening) {
-      voice.stopListening();
-    }
-  };
-}
-""",
-            "VoiceIndicator": """
-// Using VoiceIndicator from Cedar docs
-import { VoiceIndicator } from '@cedar/voice';
-import { useCedarStore } from '@cedar/core';
-
-function MyVoiceApp() {
-  const voice = useCedarStore((state) => state.voice);
-  
-  return (
-    <div>
-      {/* VoiceIndicator shows animated bars when listening */}
-      <VoiceIndicator 
-        voiceState={voice}
-        className="absolute -top-12 right-0"
-      />
-      
-      {/* ChatInput has voice built-in */}
-      <ChatInput />
-    </div>
-  );
-}
-""",
-            "permissions": """
-// Handle voice permissions (from Cedar docs)
-import { useCedarStore } from '@cedar/core';
-
-function VoicePermissionHandler() {
-  const voice = useCedarStore((state) => state.voice);
-  
-  // Check permission status
-  const checkPermission = () => {
-    switch (voice.voicePermissionStatus) {
-      case 'granted':
-        console.log('Microphone access granted');
-        break;
-      case 'denied':
-        console.log('Microphone access denied');
-        break;
-      case 'not-supported':
-        console.log('Voice not supported in this browser');
-        break;
-      default:
-        // Request permission
-        voice.requestMicrophonePermission();
-    }
-  };
-  
-  // Manual permission request
-  const requestPermission = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      stream.getTracks().forEach(track => track.stop());
-      return 'granted';
-    } catch (error) {
-      if (error.name === 'NotAllowedError') {
-        return 'denied';
-      }
-      throw error;
-    }
-  };
-}
-"""
+    def _suggest_debugging_approach(self, focus: str) -> str:
+        """Suggest debugging approach"""
+        approaches = {
+            "components": "Use React DevTools to inspect component props and state. Check voice state in Redux DevTools.",
+            "permissions": "Check browser console for permission errors. Test in different browsers. Verify HTTPS.",
+            "integration": "Monitor Network tab for API calls. Check WebSocket connections. Verify API responses.",
+            "general": "Start with browser console, check voice state, verify configuration, test in isolation."
         }
-        
-        return examples.get(component, examples["basic"])
+        return approaches.get(focus, approaches["general"])
+    
+    def _list_available_features(self, focus: str) -> List[str]:
+        """List available voice features"""
+        features = {
+            "components": self.VOICE_SEARCH_TERMS["components"],
+            "features": self.VOICE_SEARCH_TERMS["features"],
+            "methods": self.VOICE_SEARCH_TERMS["methods"],
+            "general": [
+                "Voice transcription (STT)",
+                "Text-to-speech (TTS)",
+                "Visual indicators",
+                "Permission handling",
+                "Keyboard shortcuts",
+                "State management"
+            ]
+        }
+        return features.get(focus, features["general"])
+    
+    def _get_component_categories(self) -> Dict[str, List[str]]:
+        """Get component categories"""
+        return {
+            "UI Components": ["VoiceIndicator", "VoiceButton", "VoiceWaveform"],
+            "Settings": ["VoiceSettings", "VoiceStatusPanel"],
+            "Integrated": ["ChatInput (with voice)", "FloatingCedarChat"],
+            "State": ["useCedarStore", "voice state object"]
+        }
+    
+    def _get_integration_points(self) -> List[str]:
+        """Get integration points"""
+        return [
+            "OpenAI Whisper API (transcription)",
+            "OpenAI TTS API (text-to-speech)",
+            "WebRTC for real-time voice",
+            "Browser MediaDevices API",
+            "Cedar state management"
+        ]
+    
+    def _suggest_learning_path(self, query: str, focus: str) -> List[str]:
+        """Suggest learning path"""
+        paths = {
+            "setup": [
+                "Install Cedar with plant-seed",
+                "Configure API keys",
+                "Test basic voice in ChatInput",
+                "Explore voice components"
+            ],
+            "components": [
+                "Start with ChatInput",
+                "Add VoiceIndicator",
+                "Customize voice button",
+                "Implement voice settings"
+            ],
+            "general": [
+                "Understand voice state",
+                "Try ChatInput voice",
+                "Add visual indicators",
+                "Handle permissions",
+                "Customize behavior"
+            ]
+        }
+        return paths.get(focus, paths["general"])

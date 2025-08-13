@@ -2,6 +2,7 @@ import asyncio
 import json
 import logging
 import os
+from pathlib import Path
 from typing import List, Dict, Any, Optional
 
 from dotenv import load_dotenv
@@ -11,10 +12,28 @@ import mcp.types as types
 from pydantic import AnyUrl
 
 # Load environment variables from .env file
-load_dotenv()
+# Try to load from parent directory first (cedar-test), then current directory
+
+# Find the .env file in the cedar-test directory
+current_file = Path(__file__)
+cedar_test_dir = current_file.parent.parent  # Go up to cedar-test directory
+env_path = cedar_test_dir / '.env'
+
+# Force load the .env file with override=True to ensure variables are set
+if env_path.exists():
+    load_dotenv(env_path, override=True)
+    print(f"[Cedar MCP] Loaded .env from: {env_path}")
+    # Debug: Print the actual value
+    simplified_value = os.getenv("CEDAR_MCP_SIMPLIFIED_OUTPUT")
+    print(f"[Cedar MCP] CEDAR_MCP_SIMPLIFIED_OUTPUT value: {simplified_value}")
+else:
+    # Fallback to default behavior
+    load_dotenv(override=True)
+    print("[Cedar MCP] Loaded .env from default location")
+    simplified_value = os.getenv("CEDAR_MCP_SIMPLIFIED_OUTPUT")
+    print(f"[Cedar MCP] CEDAR_MCP_SIMPLIFIED_OUTPUT value: {simplified_value}")
 
 from .services.docs import DocsIndex
-from .services.mastra_docs import MastraDocsIndex
 from .services.feature import FeatureResolver
 from .services.clarify import RequirementsClarifier
 from .tools.search_docs import SearchDocsTool
@@ -24,23 +43,35 @@ from .tools.clarify_requirements import ClarifyRequirementsTool
 from .tools.confirm_requirements import ConfirmRequirementsTool
 from .tools.check_install import CheckInstallTool
 from .tools.voice_specialist import VoiceSpecialistTool
-from .shared import GROUNDING_CONFIG, DEFAULT_INSTALL_COMMAND
+from .shared import GROUNDING_CONFIG, DEFAULT_INSTALL_COMMAND, INSTALLATION_RULES
 
 
 logger = logging.getLogger(__name__)
 
 
 class CedarModularMCPServer:
-    """MCP Server exposing modular tools:
-    - searchDocs: query Cedar-OS docs
-    - searchMastraDocs: query Mastra backend documentation
-    - getRelevantFeature: map a user goal to relevant Cedar features
-    - clarifyRequirements: comprehensive structured requirement gathering
-    - confirmRequirements: validate requirements and generate implementation plan
-    - voiceSpecialist: specialized tool for Cedar-OS Voice feature development
+    """MCP Server for Cedar-OS - CRITICAL SETUP RULES:
     
-    Prompts and execution are separated. Services perform execution;
-    prompts build structured content used by those services.
+    ⚠️ NEVER USE create-next-app FOR CEDAR PROJECTS!
+    ✅ ALWAYS USE: npx cedar-os-cli plant-seed
+    
+    The plant-seed command creates EVERYTHING:
+    - Complete Next.js application with TypeScript & Tailwind
+    - Cedar components pre-integrated and working
+    - Mastra backend with AI agents configured
+    - All dependencies and packages installed
+    - Demo UI ready to run immediately
+    
+    Tools:
+    - checkInstall: MUST BE CALLED FIRST - blocks wrong commands, enforces plant-seed
+    - searchDocs: query Cedar-OS documentation
+    - searchMastraDocs: query Mastra backend documentation  
+    - getRelevantFeature: map user goals to Cedar features
+    - clarifyRequirements: gather implementation requirements
+    - confirmRequirements: validate and plan implementation
+    - voiceSpecialist: specialized Cedar Voice development
+    
+    ENFORCEMENT: checkInstall tool MUST be called before ANY npm/create command!
     """
 
     def __init__(self, docs_path: Optional[str] = None, mastra_docs_path: Optional[str] = None) -> None:
@@ -59,10 +90,13 @@ class CedarModularMCPServer:
         )
         # Enable semantic search if Supabase credentials are available
         enable_semantic = bool(os.getenv("SUPABASE_URL") and os.getenv("SUPABASE_KEY"))
-        self.docs_index = DocsIndex(resolved_docs_path, enable_semantic_search=enable_semantic)
-        self.mastra_docs_index = MastraDocsIndex(resolved_mastra_docs_path)
-        self.feature_resolver = FeatureResolver(self.docs_index)
-        self.requirements_clarifier = RequirementsClarifier(self.docs_index)
+        # Create separate indexes for Cedar and Mastra docs
+        self.cedar_docs_index = DocsIndex(resolved_docs_path, doc_type="cedar", enable_semantic_search=enable_semantic)
+        self.mastra_docs_index = DocsIndex(resolved_mastra_docs_path, doc_type="mastra", enable_semantic_search=enable_semantic)
+        # Keep docs_index for backward compatibility
+        self.docs_index = self.cedar_docs_index
+        self.feature_resolver = FeatureResolver(self.cedar_docs_index)
+        self.requirements_clarifier = RequirementsClarifier(self.cedar_docs_index)
         # Gate: require confirmRequirements to pass before other tools
         self._requirements_confirmed: bool = False
         # Initialize tool handlers
@@ -72,13 +106,15 @@ class CedarModularMCPServer:
 
     def _init_tools(self) -> None:
         """Instantiate tool handlers and register name → handler mapping."""
-        search_tool = SearchDocsTool(self.docs_index)
+        # Use unified SearchDocsTool with both indexes
+        search_tool = SearchDocsTool(cedar_docs_index=self.cedar_docs_index, mastra_docs_index=self.mastra_docs_index)
+        # Keep separate Mastra tool for backward compatibility
         mastra_search_tool = SearchMastraDocsTool(self.mastra_docs_index)
         feature_tool = GetRelevantFeatureTool(self.feature_resolver)
         clarify_tool = ClarifyRequirementsTool(self.requirements_clarifier)
         confirm_tool = ConfirmRequirementsTool(self.requirements_clarifier)
         check_install_tool = CheckInstallTool()
-        voice_tool = VoiceSpecialistTool(self.docs_index)
+        voice_tool = VoiceSpecialistTool(self.cedar_docs_index)
 
         self.tool_handlers = {
             search_tool.name: search_tool,
@@ -198,7 +234,7 @@ class CedarModularMCPServer:
         @self.server.read_resource()
         async def handle_read_resource(uri: AnyUrl) -> str:  # type: ignore
             if str(uri) == "cedar://docs":
-                meta = self.docs_index.describe()
+                meta = self.cedar_docs_index.describe()
                 return json.dumps(meta, indent=2)
             elif str(uri) == "mastra://docs":
                 meta = self.mastra_docs_index.describe()
