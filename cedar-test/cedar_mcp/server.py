@@ -37,12 +37,13 @@ from .services.docs import DocsIndex
 from .services.feature import FeatureResolver
 from .services.clarify import RequirementsClarifier
 from .tools.search_docs import SearchDocsTool
-from .tools.search_mastra_docs import SearchMastraDocsTool
+from .tools.mastra_specialist import MastraSpecialistTool
 from .tools.get_relevant_feature import GetRelevantFeatureTool
 from .tools.clarify_requirements import ClarifyRequirementsTool
 from .tools.confirm_requirements import ConfirmRequirementsTool
 from .tools.check_install import CheckInstallTool
 from .tools.voice_specialist import VoiceSpecialistTool
+from .tools.spells_specialist import SpellsSpecialistTool
 from .shared import GROUNDING_CONFIG, DEFAULT_INSTALL_COMMAND, INSTALLATION_RULES
 
 
@@ -65,11 +66,12 @@ class CedarModularMCPServer:
     Tools:
     - checkInstall: MUST BE CALLED FIRST - blocks wrong commands, enforces plant-seed
     - searchDocs: query Cedar-OS documentation
-    - searchMastraDocs: query Mastra backend documentation  
+    - mastraSpecialist: query Mastra backend documentation  
     - getRelevantFeature: map user goals to Cedar features
     - clarifyRequirements: gather implementation requirements
     - confirmRequirements: validate and plan implementation
     - voiceSpecialist: specialized Cedar Voice development
+    - spellsSpecialist: specialized Cedar Spells development
     
     ENFORCEMENT: checkInstall tool MUST be called before ANY npm/create command!
     """
@@ -108,22 +110,24 @@ class CedarModularMCPServer:
         """Instantiate tool handlers and register name → handler mapping."""
         # Use unified SearchDocsTool with both indexes
         search_tool = SearchDocsTool(cedar_docs_index=self.cedar_docs_index, mastra_docs_index=self.mastra_docs_index)
-        # Keep separate Mastra tool for backward compatibility
-        mastra_search_tool = SearchMastraDocsTool(self.mastra_docs_index)
+        # Mastra specialist tool
+        mastra_tool = MastraSpecialistTool(self.mastra_docs_index)
         feature_tool = GetRelevantFeatureTool(self.feature_resolver)
         clarify_tool = ClarifyRequirementsTool(self.requirements_clarifier)
         confirm_tool = ConfirmRequirementsTool(self.requirements_clarifier)
         check_install_tool = CheckInstallTool()
         voice_tool = VoiceSpecialistTool(self.cedar_docs_index)
+        spells_tool = SpellsSpecialistTool(self.cedar_docs_index)
 
         self.tool_handlers = {
             search_tool.name: search_tool,
-            mastra_search_tool.name: mastra_search_tool,
+            mastra_tool.name: mastra_tool,
             feature_tool.name: feature_tool,
             clarify_tool.name: clarify_tool,
             confirm_tool.name: confirm_tool,
             check_install_tool.name: check_install_tool,
             voice_tool.name: voice_tool,
+            spells_tool.name: spells_tool,
         }
 
     def _setup_handlers(self) -> None:
@@ -148,14 +152,15 @@ class CedarModularMCPServer:
         @self.server.call_tool()
         async def handle_call_tool(name: str, arguments: Dict[str, Any]) -> List[types.TextContent]:
             try:
-                # Enforce requirements gate for all tools except clarify/confirm, checkInstall, voiceSpecialist, and the integration wizard/searchDocs/searchMastraDocs
+                # Enforce requirements gate for all tools except clarify/confirm, checkInstall, voiceSpecialist, spellsSpecialist, and the integration wizard/searchDocs/searchMastraDocs
                 allowed_preconfirm = {
                     "clarifyRequirements",
                     "confirmRequirements",
                     "searchDocs",
-                    "searchMastraDocs",  # Always allow Mastra docs search
+                    "mastraSpecialist",  # Always allow Mastra docs search
                     "checkInstall",  # Always allow install checking
                     "voiceSpecialist",  # Always allow voice development assistance
+                    "spellsSpecialist",  # Always allow spells development assistance
                 }
                 if name not in allowed_preconfirm and not self._requirements_confirmed:
                     message = {
@@ -199,7 +204,7 @@ class CedarModularMCPServer:
 
                 # If tool returns no citations and is docs-related, append a guard note
                 try:
-                    if name in {"searchDocs", "searchMastraDocs", "getRelevantFeature"}:
+                    if name in {"searchDocs", "mastraSpecialist", "getRelevantFeature"}:
                         enriched = []
                         for item in result:
                             payload = json.loads(item.text) if item.text else {}

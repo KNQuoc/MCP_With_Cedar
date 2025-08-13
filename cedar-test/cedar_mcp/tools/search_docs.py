@@ -19,7 +19,7 @@ class SearchDocsTool:
     def list_tool(self) -> McpTool:
         return McpTool(
             name=self.name,
-            description="Search Cedar-OS or Mastra documentation using semantic search (if available) or keyword search",
+            description="ONLY for general Cedar/Mastra queries. NEVER use for: Spells/RadialMenu/useSpell (→spellsSpecialist), Voice/audio/microphone (→voiceSpecialist), Mastra-specific (→mastraSpecialist)",
             inputSchema={
                 "type": "object",
                 "properties": {

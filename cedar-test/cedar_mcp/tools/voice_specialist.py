@@ -40,7 +40,7 @@ class VoiceSpecialistTool:
     def list_tool(self) -> McpTool:
         return McpTool(
             name=self.name,
-            description="Voice development assistant - searches documentation and provides guidance for voice feature implementation",
+            description="REQUIRED for ANY query containing: voice, microphone, audio, VoiceIndicator, VoiceButton, transcription, TTS, STT, speech, whisper, recording. DO NOT use searchDocs for these topics",
             inputSchema={
                 "type": "object",
                 "properties": {

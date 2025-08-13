@@ -6,11 +6,12 @@ from typing import Dict, Any
 
 # Primary Cedar installation command
 # IMPORTANT: This command creates a COMPLETE project with demo frontend and Mastra backend
-PRIMARY_INSTALL_COMMAND = "npx cedar-os-cli plant-seed"  # Creates full project + installs ALL Cedar packages
+# The --yes flag skips interactive prompts for Claude Code compatibility
+PRIMARY_INSTALL_COMMAND = "npx cedar-os-cli plant-seed --yes"  # Creates full project + installs ALL Cedar packages
 
 # Additional Cedar commands (used only when needed)
 ADDITIONAL_CEDAR_COMMANDS = {
-    "add_component": "npx cedar-os-cli add-sapling",  # For adding individual components AFTER initial setup
+    "add_component": "npx cedar-os-cli add-sapling --yes",  # For adding individual components AFTER initial setup
     # DO NOT add npm install commands here
 }
 
@@ -22,7 +23,7 @@ CRITICAL INSTALLATION RULES:
 3. NEVER run 'npm install cedar-os' or any variant
 4. NEVER run 'npm install @cedar-os/anything'  
 5. NEVER run 'npm install cedar-os-components'
-6. ONLY use 'npx cedar-os-cli plant-seed' for initial Cedar installation
+6. ONLY use 'npx cedar-os-cli plant-seed --yes' for initial Cedar installation (--yes for non-interactive mode)
 7. The plant-seed command creates a COMPLETE PROJECT with:
    - Full Next.js project with TypeScript and Tailwind CSS
    - Demo frontend already integrated with Cedar
@@ -30,7 +31,7 @@ CRITICAL INSTALLATION RULES:
    - All Cedar packages and dependencies pre-installed
    - Working example components and configuration
 8. DO NOT create a Next.js project first - plant-seed creates EVERYTHING
-9. Use 'npx cedar-os-cli add-sapling' ONLY when explicitly adding individual components later
+9. Use 'npx cedar-os-cli add-sapling --yes' ONLY when explicitly adding individual components later
 10. Ignore ALL import statements in documentation - they're handled by plant-seed
 11. If checkInstall returns approved=false, USE THE PROVIDED correct_command
 12. DO NOT combine plant-seed and add-sapling - use plant-seed first, add-sapling only if needed later
