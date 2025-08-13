@@ -1,11 +1,9 @@
-import json
-import os
 import logging
 from dataclasses import dataclass
 import re
 from pathlib import Path
-from typing import List, Dict, Any, Optional, Tuple
-from .semantic_search import SemanticSearchService, SemanticSearchResult
+from typing import List, Dict, Any, Optional
+from .semantic_search import SemanticSearchService
 
 logger = logging.getLogger(__name__)
 
@@ -15,18 +13,20 @@ class DocChunk:
     source: str
     heading: Optional[str]
     content: str
+    url: Optional[str] = None
+    section: Optional[str] = None
 
 
 class DocsIndex:
-    """Very lightweight document indexer.
-
-    For now, it loads one or more JSON/Markdown files from a directory
-    and performs naive keyword search. This can later be replaced
-    with a vector index without changing the MCP server surface.
+    """Document indexer that supports multiple documentation sources.
+    
+    Can handle both Cedar and Mastra documentation formats, with the ability
+    to load from different files based on the documentation type.
     """
 
-    def __init__(self, docs_path: Optional[str], enable_semantic_search: bool = False) -> None:
+    def __init__(self, docs_path: Optional[str] = None, doc_type: str = "cedar", enable_semantic_search: bool = False) -> None:
         self.docs_path = Path(docs_path) if docs_path else None
+        self.doc_type = doc_type  # 'cedar' or 'mastra'
         self.chunks: List[DocChunk] = []
         # Keep original file contents for line-level citations
         self._file_texts: Dict[str, str] = {}
@@ -37,82 +37,175 @@ class DocsIndex:
                 self.semantic_search = SemanticSearchService()
             except ValueError as e:
                 logger.info(f"Semantic search not available: {e}")
-        # Only load from provided docs path (e.g., cedar_llms_full.txt)
+        # Only load from provided docs path
         if self.docs_path and self.docs_path.exists():
             self._load()
 
     def _load(self) -> None:
-        """Load docs from a directory OR a single file path.
-
-        Supports .md/.markdown/.json and now .txt (treated as markdown-like text).
+        """Load docs based on the doc_type (cedar or mastra).
+        
+        Supports .md/.markdown/.json and .txt files.
+        For Mastra docs, uses special parsing to extract URLs and sections.
         """
-        allowed = {".md", ".markdown", ".json", ".txt"}
-
-        def _load_entry(path: Path) -> None:
-            if not (path.is_file() and path.suffix.lower() in allowed):
-                return
-            try:
-                if path.suffix.lower() == ".json":
-                    data = json.loads(path.read_text(encoding="utf-8"))
-                    # Expect list of {heading?, content}
-                    if isinstance(data, list):
-                        for item in data:
-                            self.chunks.append(
-                                DocChunk(
-                                    source=str(path),
-                                    heading=item.get("heading"),
-                                    content=item.get("content", ""),
-                                )
-                            )
-                else:
-                    # Markdown or text: split by headings as a crude chunking
-                    text = path.read_text(encoding="utf-8")
-                    # Persist full file text for later line-level citation lookup
-                    self._file_texts[str(path)] = text
-                    sections = self._split_markdown(text)
-                    for heading, content in sections:
-                        self.chunks.append(
-                            DocChunk(source=str(path), heading=heading, content=content)
-                        )
-            except Exception:
-                # Skip unreadable/invalid files quietly for now
-                return
-
-        if self.docs_path.is_file():
-            _load_entry(self.docs_path)
+        if not self.docs_path.is_file():
+            logger.warning(f"Docs path is not a file: {self.docs_path}")
             return
-        for path in self.docs_path.rglob("*"):
-            _load_entry(path)
+            
+        try:
+            text = self.docs_path.read_text(encoding="utf-8")
+            self._file_texts[str(self.docs_path)] = text
+            
+            # Parse based on doc type
+            if self.doc_type == "mastra":
+                self._parse_mastra_docs(text)
+            else:
+                # Default Cedar parsing or generic markdown
+                self._parse_cedar_docs(text)
+        except Exception as e:
+            logger.error(f"Failed to load {self.doc_type} docs: {e}")
 
-    def _load_builtin_docs(self) -> None:
-        """Load comprehensive Cedar-OS documentation based on actual docs.
-
-        Updated with real content from Cedar-OS documentation including:
-        - Introduction and core features
-        - Getting Started with actual package names and setup
-        - Chat components (FloatingCedarChat, ChatInput, streaming)
-        - Agent Input Context (mentions, state subscription)
-        - Agentic State and Actions
+    def _parse_cedar_docs(self, text: str) -> None:
+        """Parse Cedar documentation format.
+        
+        Cedar docs use standard markdown with Source URLs at the top.
         """
-        return  # disabled; rely solely on external cedar_llms_full.txt
-
-    @staticmethod
-    def _split_markdown(text: str) -> List[Tuple[Optional[str], str]]:
         lines = text.splitlines()
-        sections: List[Tuple[Optional[str], List[str]]] = []
-        current_heading: Optional[str] = None
-        buffer: List[str] = []
+        current_source = None
+        current_heading = None
+        buffer = []
+        
         for line in lines:
+            # Check for source URL
+            if line.startswith("Source: https://"):
+                # Save previous chunk if exists
+                if buffer and current_heading:
+                    content = "\n".join(buffer).strip()
+                    if content:
+                        self.chunks.append(DocChunk(
+                            source=str(self.docs_path),
+                            heading=current_heading,
+                            content=content,
+                            url=current_source
+                        ))
+                buffer = []
+                current_source = line[8:].strip()  # Remove "Source: " prefix
+                continue
+            
+            # Check for markdown heading
             if line.startswith("#"):
-                if buffer:
-                    sections.append((current_heading, buffer))
-                    buffer = []
-                current_heading = line.lstrip("# ")
+                # Save previous chunk if exists
+                if buffer and current_heading:
+                    content = "\n".join(buffer).strip()
+                    if content:
+                        self.chunks.append(DocChunk(
+                            source=str(self.docs_path),
+                            heading=current_heading,
+                            content=content,
+                            url=current_source
+                        ))
+                buffer = []
+                current_heading = line.lstrip("#").strip()
             else:
                 buffer.append(line)
-        if buffer:
-            sections.append((current_heading, buffer))
-        return [(h, "\n".join(b).strip()) for h, b in sections]
+        
+        # Save last chunk
+        if buffer and current_heading:
+            content = "\n".join(buffer).strip()
+            if content:
+                self.chunks.append(DocChunk(
+                    source=str(self.docs_path),
+                    heading=current_heading,
+                    content=content,
+                    url=current_source
+                ))
+    
+    def _parse_mastra_docs(self, text: str) -> None:
+        """Parse Mastra documentation format.
+        
+        The format includes:
+        - Source URLs (Source: https://mastra.ai/...)
+        - Section markers ([EN] Source: ...)
+        - Markdown headings
+        - Code blocks and content
+        """
+        lines = text.splitlines()
+        current_source = None
+        current_section = None
+        current_heading = None
+        buffer = []
+        
+        i = 0
+        while i < len(lines):
+            line = lines[i]
+            
+            # Check for source URL
+            if line.startswith("Source: https://mastra.ai/"):
+                # Save previous chunk if exists
+                if buffer and current_heading:
+                    content = "\n".join(buffer).strip()
+                    if content:
+                        self.chunks.append(DocChunk(
+                            source=str(self.docs_path),
+                            heading=current_heading,
+                            content=content,
+                            url=current_source,
+                            section=current_section
+                        ))
+                buffer = []
+                current_source = line[8:].strip()  # Remove "Source: " prefix
+                i += 1
+                continue
+            
+            # Check for section marker
+            if line.startswith("[EN] Source:"):
+                # Save previous chunk if exists
+                if buffer and current_heading:
+                    content = "\n".join(buffer).strip()
+                    if content:
+                        self.chunks.append(DocChunk(
+                            source=str(self.docs_path),
+                            heading=current_heading,
+                            content=content,
+                            url=current_source,
+                            section=current_section
+                        ))
+                buffer = []
+                current_section = line
+                i += 1
+                continue
+            
+            # Check for markdown heading
+            if line.startswith("#"):
+                # Save previous chunk if exists
+                if buffer and current_heading:
+                    content = "\n".join(buffer).strip()
+                    if content:
+                        self.chunks.append(DocChunk(
+                            source=str(self.docs_path),
+                            heading=current_heading,
+                            content=content,
+                            url=current_source,
+                            section=current_section
+                        ))
+                buffer = []
+                current_heading = line.lstrip("#").strip()
+            else:
+                buffer.append(line)
+            
+            i += 1
+        
+        # Save last chunk
+        if buffer and current_heading:
+            content = "\n".join(buffer).strip()
+            if content:
+                self.chunks.append(DocChunk(
+                    source=str(self.docs_path),
+                    heading=current_heading,
+                    content=content,
+                    url=current_source,
+                    section=current_section
+                ))
+
 
     async def search(self, query: str, limit: int = 5, use_semantic: bool = True) -> List[Dict[str, Any]]:
         """Search over docs using semantic search if available, otherwise keyword-based search.
@@ -159,8 +252,8 @@ class DocsIndex:
 
         def tokenize(text: str) -> List[str]:
             tokens = normalize(text).split(" ")
-            # Keep common short-but-meaningful tokens (ui, os, ai, llm, sse)
-            short_whitelist = {"ui", "os", "ai", "llm", "sse", "ux"}
+            # Keep common short-but-meaningful tokens for both Cedar and Mastra
+            short_whitelist = {"ui", "os", "ai", "llm", "sse", "ux", "mcp", "api", "jwt", "cli", "sdk"}
             return [t for t in tokens if len(t) >= 3 or t in short_whitelist]
 
         query_tokens = list(dict.fromkeys(tokenize(query)))  # unique, preserve order
@@ -176,14 +269,23 @@ class DocsIndex:
             token_hits: Dict[str, int] = {}
 
             for token in query_tokens:
-                # Count token hits allowing simple suffix variants (e.g., tool/tools, agent/agents/agentic)
+                # Count token hits allowing simple suffix variants
                 pattern = rf"\b{re.escape(token)}\w*\b"
                 heading_hits = len(re.findall(pattern, heading_text))
                 body_hits = len(re.findall(pattern, body_text))
-                token_total = heading_hits * 2 + body_hits  # heading gets a small boost
+                
+                # Give extra weight to doc-specific terms
+                weight = 1.0
+                if self.doc_type == "mastra" and token in ["mastra", "agent", "workflow", "tool", "memory"]:
+                    weight = 2.0
+                elif self.doc_type == "cedar" and token in ["cedar", "voice", "chat", "copilot", "mention"]:
+                    weight = 2.0
+                    
+                token_total = (heading_hits * 3 + body_hits) * weight
+                
                 if token_total > 0:
-                    token_hits[token] = token_total
-                    chunk_score += float(token_total)
+                    token_hits[token] = int(token_total)
+                    chunk_score += token_total
 
             if chunk_score > 0:
                 scored.append((chunk_score, chunk, token_hits))
@@ -193,17 +295,24 @@ class DocsIndex:
         top = scored[: max(0, int(limit))]
 
         results: List[Dict[str, Any]] = []
-        for score, c, token_hits in top:
+        for score, chunk, token_hits in top:
             entry: Dict[str, Any] = {
-                "source": c.source,
-                "heading": c.heading,
-                "content": c.content[:2000],  # truncate for payload size
+                "source": chunk.source,
+                "heading": chunk.heading,
+                "content": chunk.content[:2000],  # truncate for payload size
                 "matchCount": int(score),
                 "matchedTokens": token_hits,
             }
+            
+            # Add URL and section if available (for Mastra docs)
+            if chunk.url:
+                entry["url"] = chunk.url
+            if chunk.section:
+                entry["section"] = chunk.section
+            
             # Add best-effort line-level citations when the source is a local file we loaded
-            if c.source and c.source.startswith("/") and c.source in self._file_texts and token_hits:
-                file_text = self._file_texts[c.source]
+            if chunk.source and chunk.source.startswith("/") and chunk.source in self._file_texts and token_hits:
+                file_text = self._file_texts[chunk.source]
                 token_line_map: Dict[str, List[int]] = {}
                 all_lines: List[int] = []
                 for token in token_hits.keys():
@@ -213,7 +322,7 @@ class DocsIndex:
                         all_lines.extend(lines_for_token)
                 if all_lines:
                     entry["citations"] = {
-                        "source": c.source,
+                        "source": chunk.source,
                         "approxSpan": {
                             "start": min(all_lines),
                             "end": max(all_lines),
@@ -270,9 +379,26 @@ class DocsIndex:
             return []
 
     def describe(self) -> Dict[str, Any]:
+        """Return description of the loaded docs."""
+        if self.doc_type == "mastra":
+            sections = set()
+            for chunk in self.chunks:
+                if chunk.section:
+                    # Extract the main section name from [EN] Source: ...
+                    match = re.search(r'\[EN\] Source: https://mastra\.ai/en/docs/(.+?)(?:/|$)', chunk.section)
+                    if match:
+                        sections.add(match.group(1))
+            
+            return {
+                "docs_path": str(self.docs_path) if self.docs_path else None,
+                "num_chunks": len(self.chunks),
+                "sections": sorted(sections),
+                "type": "Mastra Documentation"
+            }
+        
         return {
             "docs_path": str(self.docs_path) if self.docs_path else None,
             "num_chunks": len(self.chunks),
             "sources": sorted({Path(c.source).name if c.source.startswith("/") else c.source for c in self.chunks}),
-            "has_builtin": False,
+            "type": "Cedar Documentation"
         }

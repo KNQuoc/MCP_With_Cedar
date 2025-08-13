@@ -6,7 +6,7 @@ from typing import Any, Dict, List
 from mcp.types import Tool as McpTool, TextContent
 
 from ..services.clarify import RequirementsClarifier
-from ..shared import GROUNDING_CONFIG, build_implementation_plan
+from ..shared import GROUNDING_CONFIG, build_implementation_plan, format_tool_output
 
 
 class ConfirmRequirementsTool:
@@ -39,30 +39,33 @@ class ConfirmRequirementsTool:
         confirmations: Dict[str, bool] = arguments.get("confirmations", {})
         if not confirmations:
             # Keep this tool as a minimal gate switch; do not return checklist here.
-            payload = {
+            full_payload = {
                 "satisfied": False,
                 "missing": ["confirmations"],
                 "message": "Provide confirmations (from clarifyRequirements validation) to confirm and enable coding.",
                 "grounding": GROUNDING_CONFIG,
             }
-            return [TextContent(type="text", text=json.dumps(payload, indent=2))]
+            formatted = format_tool_output(full_payload, keep_fields=["satisfied", "missing", "message"])
+            return [TextContent(type="text", text=json.dumps(formatted, indent=2))]
 
         validation = self.clarifier.validate_confirmations(confirmations)
         
         # If requirements are satisfied, generate implementation plan
         if validation.get("satisfied"):
             plan = build_implementation_plan(confirmations)
-            payload = {
+            full_payload = {
                 **validation,
                 "plan": plan,
                 "grounding": GROUNDING_CONFIG,
             }
+            formatted = format_tool_output(full_payload, keep_fields=["satisfied", "plan"])
         else:
-            payload = {
+            full_payload = {
                 **validation,
                 "grounding": GROUNDING_CONFIG,
             }
+            formatted = format_tool_output(full_payload, keep_fields=["satisfied", "missing", "message"])
         
-        return [TextContent(type="text", text=json.dumps(payload, indent=2))]
+        return [TextContent(type="text", text=json.dumps(formatted, indent=2))]
 
 

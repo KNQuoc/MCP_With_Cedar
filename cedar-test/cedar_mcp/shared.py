@@ -1,10 +1,12 @@
 """Shared constants and utilities for Cedar MCP."""
 
+import os
 from typing import Dict, Any
 
 
 # Primary Cedar installation command
-PRIMARY_INSTALL_COMMAND = "npx cedar-os-cli plant-seed"  # This installs ALL Cedar packages
+# IMPORTANT: This command creates a COMPLETE project with demo frontend and Mastra backend
+PRIMARY_INSTALL_COMMAND = "npx cedar-os-cli plant-seed"  # Creates full project + installs ALL Cedar packages
 
 # Additional Cedar commands (used only when needed)
 ADDITIONAL_CEDAR_COMMANDS = {
@@ -15,16 +17,23 @@ ADDITIONAL_CEDAR_COMMANDS = {
 # Installation rules that MUST be enforced
 INSTALLATION_RULES = """
 CRITICAL INSTALLATION RULES:
-1. ALWAYS call checkInstall tool BEFORE any npm/yarn/pnpm install command
-2. NEVER run 'npm install cedar-os' or any variant
-3. NEVER run 'npm install @cedar-os/anything'  
-4. NEVER run 'npm install cedar-os-components'
-5. ONLY use 'npx cedar-os-cli plant-seed' for initial Cedar installation
-6. The plant-seed command installs EVERYTHING needed initially
-7. Use 'npx cedar-os-cli add-sapling' ONLY when explicitly adding individual components later
-8. Ignore ALL import statements in documentation - they're handled by plant-seed
-9. If checkInstall returns approved=false, USE THE PROVIDED correct_command
-10. DO NOT combine plant-seed and add-sapling - use plant-seed first, add-sapling only if needed later
+1. ALWAYS call checkInstall tool BEFORE any npm/yarn/pnpm command (including create-next-app)
+2. NEVER run 'create-next-app' when setting up Cedar - plant-seed creates the project
+3. NEVER run 'npm install cedar-os' or any variant
+4. NEVER run 'npm install @cedar-os/anything'  
+5. NEVER run 'npm install cedar-os-components'
+6. ONLY use 'npx cedar-os-cli plant-seed' for initial Cedar installation
+7. The plant-seed command creates a COMPLETE PROJECT with:
+   - Full Next.js project with TypeScript and Tailwind CSS
+   - Demo frontend already integrated with Cedar
+   - Mastra backend already initialized with Cedar-OS
+   - All Cedar packages and dependencies pre-installed
+   - Working example components and configuration
+8. DO NOT create a Next.js project first - plant-seed creates EVERYTHING
+9. Use 'npx cedar-os-cli add-sapling' ONLY when explicitly adding individual components later
+10. Ignore ALL import statements in documentation - they're handled by plant-seed
+11. If checkInstall returns approved=false, USE THE PROVIDED correct_command
+12. DO NOT combine plant-seed and add-sapling - use plant-seed first, add-sapling only if needed later
 """
 
 # Packages that should NEVER be installed directly via npm
@@ -77,10 +86,18 @@ GROUNDING_CONFIG = {
     "no_code_edits_until_confirmed": True,
     "install_policy": INSTALLATION_RULES,
     "error_handling": ERROR_HANDLING_RULES,
-    "blocked_commands": [f"npm install {pkg}" for pkg in BLOCKED_PACKAGES],
+    "blocked_commands": [f"npm install {pkg}" for pkg in BLOCKED_PACKAGES] + [
+        "create-next-app",
+        "npx create-next-app",
+        "npm create next-app",
+        "yarn create next-app",
+        "pnpm create next-app",
+        "create-react-app",
+        "npx create-react-app"
+    ],
     "only_allowed_install": DEFAULT_INSTALL_COMMAND,
-    "pre_install_check": "MANDATORY: Call checkInstall tool FIRST when starting Cedar work AND before ANY package installation",
-    "cedar_init_rule": "When starting Cedar integration, ALWAYS call checkInstall with context='starting Cedar integration' to get CLI installation command",
+    "pre_install_check": "MANDATORY: Call checkInstall tool FIRST when starting Cedar work, before ANY npm command including create-next-app",
+    "cedar_init_rule": "When starting Cedar/Cedar-OS in ANY folder (empty or existing), ALWAYS call checkInstall FIRST with context='starting Cedar integration'. NEVER use create-next-app - plant-seed creates the complete project with TypeScript, Tailwind, and everything configured.",
 }
 
 # Shared guidance text for tools
@@ -113,10 +130,20 @@ def get_cedar_command(command_type: str = "install") -> str:
 
 
 def is_blocked_install_command(command: str) -> bool:
-    """Check if a command contains blocked Cedar package installations."""
+    """Check if a command contains blocked Cedar package installations or project creation."""
     if not command:
         return False
     cmd_lower = command.lower()
+    
+    # Block create-next-app and similar commands
+    if any(create_cmd in cmd_lower for create_cmd in [
+        "create-next-app",
+        "create-react-app",
+        "create next-app",
+        "create react-app"
+    ]):
+        return True
+    
     # Check for npm install of blocked packages
     for pkg in BLOCKED_PACKAGES:
         if f"npm install {pkg}" in cmd_lower or f"npm i {pkg}" in cmd_lower:
@@ -209,3 +236,56 @@ def build_grounding_payload(additional_fields: Dict[str, Any] = None) -> Dict[st
     if additional_fields:
         payload.update(additional_fields)
     return payload
+
+
+def format_tool_output(full_payload: Dict[str, Any], keep_fields: list = None) -> Dict[str, Any]:
+    """Format tool output based on CEDAR_MCP_SIMPLIFIED_OUTPUT environment variable.
+    
+    Args:
+        full_payload: The complete payload with all fields
+        keep_fields: List of field names to keep when simplified (default: ['results'])
+    
+    Returns:
+        Either the full payload or a simplified version with only specified fields
+    """
+    # Check if simplified output is enabled
+    simplified_env = os.getenv("CEDAR_MCP_SIMPLIFIED_OUTPUT", "true")  # Default to true
+    
+    # HARDCODED OVERRIDE FOR CLAUDE CODE COMPATIBILITY
+    # Always use simplified mode for cleaner output
+    # Comment out this line to respect the env variable
+    simplified = True  # Force simplified mode
+    
+    # To use env variable control, comment the line above and uncomment below:
+    # simplified = simplified_env.lower() == "true"
+    
+    # Debug logging
+    import logging
+    logger = logging.getLogger(__name__)
+    logger.debug(f"CEDAR_MCP_SIMPLIFIED_OUTPUT env var: {simplified_env}, simplified: {simplified}")
+    
+    if not simplified:
+        # Return full payload with all prompts, guidance, etc.
+        return full_payload
+    
+    # Default fields to keep when simplified
+    if keep_fields is None:
+        keep_fields = ["results"]
+    
+    # Build simplified payload with only specified fields
+    simplified_payload = {}
+    for field in keep_fields:
+        if field in full_payload:
+            simplified_payload[field] = full_payload[field]
+    
+    # Always include action/type if present (for context)
+    if "action" in full_payload:
+        simplified_payload["action"] = full_payload["action"]
+    if "type" in full_payload:
+        simplified_payload["type"] = full_payload["type"]
+    
+    # Include error if present
+    if "error" in full_payload:
+        simplified_payload["error"] = full_payload["error"]
+    
+    return simplified_payload

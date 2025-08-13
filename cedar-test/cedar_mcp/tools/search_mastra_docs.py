@@ -5,13 +5,14 @@ from typing import Any, Dict, List
 
 from mcp.types import Tool as McpTool, TextContent
 
-from ..services.mastra_docs import MastraDocsIndex
+from ..services.docs import DocsIndex
+from ..shared import format_tool_output
 
 
 class SearchMastraDocsTool:
     name = "searchMastraDocs"
 
-    def __init__(self, mastra_docs_index: MastraDocsIndex) -> None:
+    def __init__(self, mastra_docs_index: DocsIndex) -> None:
         self.mastra_docs_index = mastra_docs_index
 
     def list_tool(self) -> McpTool:
@@ -37,13 +38,14 @@ class SearchMastraDocsTool:
         
         # If no results found, return helpful message
         if not results:
-            payload = {
+            full_payload = {
                 "prompt": prompt,
                 "results": [],
                 "note": "No matching Mastra documentation found",
                 "suggestion": "Try searching for: agents, workflows, tools, memory, MCP, authentication, or specific Mastra features"
             }
-            return [TextContent(type="text", text=json.dumps(payload, indent=2))]
+            formatted = format_tool_output(full_payload, keep_fields=["results", "note", "suggestion"])
+            return [TextContent(type="text", text=json.dumps(formatted, indent=2))]
 
         # Add guidance for Mastra-specific responses
         guidance = {
@@ -60,13 +62,14 @@ class SearchMastraDocsTool:
             "response_format": "Provide implementation examples and code snippets when relevant"
         }
         
-        payload = {
+        full_payload = {
             "prompt": prompt,
             "guidance": guidance,
             "results": results
         }
         
-        return [TextContent(type="text", text=json.dumps(payload, indent=2))]
+        formatted = format_tool_output(full_payload, keep_fields=["results"])
+        return [TextContent(type="text", text=json.dumps(formatted, indent=2))]
 
     @staticmethod
     def _build_prompt(query: str) -> str:
