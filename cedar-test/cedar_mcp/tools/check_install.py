@@ -172,7 +172,7 @@ class CheckInstallTool:
                     "DO NOT use add-sapling unless specifically adding individual components later."
                 )
             }
-            formatted = format_tool_output(full_payload, keep_fields=["approved", "correct_command", "message"])
+            formatted = format_tool_output(full_payload, keep_fields=["approved", "correct_command"])
             return [types.TextContent(
                 type="text",
                 text=json.dumps(formatted, indent=2)

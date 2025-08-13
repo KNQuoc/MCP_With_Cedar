@@ -1,5 +1,5 @@
 Source: https://docs.cedarcopilot.com/llms-full.txt
-Fetched: 2025-08-12T02:32:40.879564+00:00
+Fetched: 2025-08-13T16:31:36.543529+00:00
 ETag: None
 Last-Modified: None
 # Agent Backend Connection
@@ -228,7 +228,7 @@ export interface LLMResponse {
 		totalTokens: number;
 	};
 	metadata?: Record<string, unknown>;
-	object?: unknown; // The object field contains structured output that is parsed for state execution, generative UI, etc.
+	object?: StructuredResponseType | StructuredResponseType[]; // See the docs on How Responses are Processed to understand how this field is parsed
 }
 ```
 
@@ -245,7 +245,7 @@ export interface LLMResponse {
     * Automatically renders the object content as a new chat message
     * Note: if you return an object with this type AND a content field, both will be rendered as chat messages in the order the are received
 
-    Other `type` values can be used for custom handling (such as generative UI).
+    Other `type` values can be used for custom handling (such as generative UI). See [Custom Response Handling](/agent-backend-connection/custom-response-processing) to learn how this works.
   </Accordion>
 </AccordionGroup>
 
@@ -697,7 +697,7 @@ interface LLMResponse {
 		totalTokens: number;
 	};
 	metadata?: Record<string, unknown>; // Optional metadata (model, id, etc.)
-	object?: unknown; // For structured output
+	object?: StructuredResponseType | StructuredResponseType[]; // For structured output (See How Responses are Processed)
 }
 ```
 
@@ -1169,6 +1169,336 @@ interface MyProviderConfig {
 **Streaming issues**: Check that your API supports Server-Sent Events and that you're parsing the format correctly.
 
 **Authentication errors**: Verify your API key and authentication method match your provider's requirements.
+
+
+# How Responses are Processed (and Custom Processing)
+Source: https://docs.cedarcopilot.com/agent-backend-connection/custom-response-processing
+
+Learn how Cedar deals with all structured objects returned from the backend.
+
+Cedar allows you to completely customize how structured responses from your agent backend are processed. This is the system through which messages are added to the chat, state actions are executed, or any decisions are made on how to deal with responses from the backend.
+
+Note: This system closely mirrors the architecture of [Custom Message Rendering](/chat/custom-message-rendering).
+
+## LLM Response Structure
+
+When your agent backend returns responses, they follow the `LLMResponse` interface:
+
+```tsx
+interface LLMResponse {
+	content: string; // Text content from the LLM
+	usage?: {
+		promptTokens: number;
+		completionTokens: number;
+		totalTokens: number;
+	};
+	metadata?: Record<string, unknown>; // Additional metadata
+	// The object field contains structured output when using JSON Schema or Zod
+	object?: StructuredResponseType | StructuredResponseType[];
+}
+```
+
+The **`object` field** is where Cedar looks for structured responses to process. It can contain:
+
+* A single `StructuredResponseType` object
+* An array of `StructuredResponseType` objects for multiple operations
+* `undefined` if no structured output was generated
+
+Only objects in the `object` field are processed by the response processing system. The `content` field is always added to the chat by default as a simple text message.
+
+## Base Response Type
+
+All structured responses in Cedar extend the `BaseStructuredResponseType` interface:
+
+```tsx
+interface BaseStructuredResponseType {
+	type: string; // String identifier for processor matching
+	content?: string; // Optional text content
+}
+```
+
+## Requirements for Custom Response Processing
+
+To use the custom response processing system, your response objects must have a `type` field. This field determines which processor will be used to handle the response.
+
+```tsx
+// Valid response - has required 'type' field
+{
+  type: 'notification',
+  content: 'Task completed successfully',
+  level: 'success'
+}
+
+// Invalid - missing 'type' field
+{
+  content: 'This response will be added as a regular message'
+}
+```
+
+## Response Processor Interface
+
+Cedar uses a strongly typed `ResponseProcessor` interface that ensures type safety throughout the processing pipeline:
+
+```tsx
+export interface ResponseProcessor<
+	T extends StructuredResponseType = StructuredResponseType
+> {
+	type: string; // Must match the response type
+	namespace?: string; // Optional organization namespace
+	execute: (obj: T, store: CedarStore) => void | Promise<void>; // Receives narrowly typed response
+	validate?: (obj: StructuredResponseType) => obj is T; // Receives broadly typed response for validation
+}
+```
+
+**Key typing features:**
+
+* The `execute` function receives your **narrowly typed custom response** (e.g., `NotificationResponse`)
+* The `validate` function receives the **broadly typed `StructuredResponseType`** for runtime validation
+
+## Custom Response Type Definition
+
+Cedar exports a `CustomStructuredResponseType<T, P>` type that allows you to create type-safe custom responses:
+
+```tsx
+import { CustomStructuredResponseType } from 'cedar-os';
+
+// T = type string, P = additional properties
+export type CustomStructuredResponseType<
+	T extends string,
+	P extends object = Record<string, never>
+> = BaseStructuredResponseType & { type: T } & P;
+
+// Example usage
+type NotificationResponse = CustomStructuredResponseType<
+	'notification',
+	{
+		level: 'info' | 'success' | 'warning' | 'error';
+	}
+>;
+
+type StateUpdateResponse = CustomStructuredResponseType<
+	'state-update',
+	{
+		key: string;
+		value: any;
+		timestamp: string;
+	}
+>;
+```
+
+## Response Processor Factory Function
+
+Cedar exports a `createResponseProcessor` factory function to create type-safe processors:
+
+```tsx
+import { createResponseProcessor } from 'cedar-os';
+
+// Create a processor with full type safety
+const NotificationProcessor = createResponseProcessor<NotificationResponse>({
+	type: 'notification',
+	namespace: 'my-app',
+	execute: (obj, store) => {
+		// obj is narrowly typed as NotificationResponse
+		showToast(obj.content, obj.level);
+		store.addMessage({
+			type: 'text',
+			role: 'assistant',
+			content: `📢 ${obj.content}`,
+		});
+	},
+	validate: (obj): obj is NotificationResponse => {
+		// obj is broadly typed as StructuredResponseType for validation
+		return obj.type === 'notification' && 'level' in obj;
+	},
+});
+```
+
+## How Response Processing Works Internally
+
+When a response comes back from the backend, Cedar uses the following process:
+
+1. **Response Reception**: The system receives the LLM response and checks for structured objects in the `object` field
+2. **Type Detection**: If an object exists, the system examines its `type` field
+3. **Processor Lookup**: The system searches for a registered processor that matches the response type
+4. **Validation**: If a processor is found and has a validation function, it checks if the response structure is valid
+5. **Processing**: If validation passes (or no validation exists), the processor's `execute` function is called
+6. **Override Behavior**: This is the ONLY thing that runs - it completely overrides default behavior, so if you want to add the message to chat, you must do so manually in your processor
+
+## Full Implementation Examples
+
+```tsx
+import {
+	createResponseProcessor,
+	CustomStructuredResponseType,
+} from 'cedar-os';
+
+// Define custom response type
+type UnregisteredResponseType = CustomStructuredResponseType<
+	'unregistered_event',
+	{ level: string }
+>;
+
+// Create the processor
+const responseProcessor = createResponseProcessor<UnregisteredResponseType>({
+	type: 'unregistered_event',
+	namespace: 'product-roadmap',
+	execute: (obj, store) => {
+		// Custom processing logic
+		console.log('🔥 Unregistered event', obj);
+
+		// Manually add to chat if desired
+		store.addMessage({
+			type: 'text',
+			role: 'assistant',
+			content: `Received ${obj.type} with level: ${obj.level}`,
+		});
+	},
+	validate: (obj): obj is UnregisteredResponseType => {
+		return obj.type === 'unregistered_event' && 'level' in obj;
+	},
+});
+
+// Register with CedarCopilot
+<CedarCopilot
+	responseProcessors={[responseProcessor]}
+	// ... other props
+>
+	{children}
+</CedarCopilot>;
+```
+
+## Default Response Types and Processors
+
+Cedar automatically handles these response types with default behavior. Each type has a corresponding default processor:
+
+### `"message"` Type
+
+* **Behavior**: Adds text messages directly to chat with specified role
+* **Properties**: `content: string`, `role?: 'user' | 'assistant' | 'bot'`
+* **Default Processor**: `messageResponseProcessor` adds messages to chat
+
+```tsx
+// Default messageResponseProcessor implementation
+const messageResponseProcessor = {
+	type: 'message',
+	execute: (obj, store) => {
+		store.addMessage({
+			role: obj.role || 'assistant',
+			content: obj.content,
+			type: 'text',
+		});
+	},
+};
+```
+
+### `"action"` Type
+
+* **Behavior**: Executes state actions via custom setters and adds action message to chat
+* **Properties**: `stateKey: string`, `setterKey: string`, `args?: unknown[]`
+* **Default Processor**: `actionResponseProcessor` executes state actions and adds to chat
+
+```tsx
+// Default actionResponseProcessor implementation
+const actionResponseProcessor = {
+	type: 'action',
+	namespace: 'default',
+	execute: async (obj, store) => {
+		// Execute the state action
+		const args = Array.isArray(obj.args) ? obj.args : [];
+		store.executeCustomSetter(obj.stateKey, obj.setterKey, ...args);
+
+		// Add action message to chat
+		store.addMessage(obj as unknown as MessageInput);
+	},
+	validate: (obj): obj is ActionResponse =>
+		obj.type === 'action' &&
+		'stateKey' in obj &&
+		'setterKey' in obj &&
+		typeof obj.stateKey === 'string' &&
+		typeof obj.setterKey === 'string',
+};
+```
+
+**Action Factory Functions**: Cedar provides special factory functions for action responses:
+
+```tsx
+import { createActionResponseProcessor, ActionResponseFor } from 'cedar-os';
+
+// Specific action response type using helper
+type UpdateCounterResponse = ActionResponseFor<
+	'counter', // StateKey
+	'increment', // SetterKey
+	[number] // Args
+>;
+
+// Create custom action processor with filtering
+const CounterActionProcessor =
+	createActionResponseProcessor<UpdateCounterResponse>({
+		namespace: 'counter',
+		setterKey: 'increment', // Only handle increment actions
+		execute: (obj, store) => {
+			// Custom processing logic
+			const amount = obj.args?.[0] || 1;
+			store.executeCustomSetter('counter', 'increment', amount);
+
+			// Custom message instead of default
+			store.addMessage({
+				type: 'text',
+				role: 'assistant',
+				content: `✅ Counter incremented by ${amount}. New value: ${
+					store.getState().counter.value
+				}`,
+			});
+		},
+	});
+```
+
+### `"progress_update"` Type
+
+* **Behavior**: Updates existing progress messages or creates new ones with state tracking
+* **Properties**: `text: string`, `state: 'in_progress' | 'complete' | 'error'`
+* **Default Processor**: `progressUpdateResponseProcessor` manages progress message lifecycle
+
+```tsx
+// Default progressUpdateResponseProcessor implementation
+const progressUpdateResponseProcessor = {
+	type: 'progress_update',
+	execute: (obj, store) => {
+		const existingMessage = store.findProgressMessage(obj.text);
+
+		if (existingMessage) {
+			store.updateMessage(existingMessage.id, {
+				metadata: { ...existingMessage.metadata, state: obj.state },
+			});
+		} else {
+			store.addMessage({
+				type: 'progress_update',
+				role: 'assistant',
+				content: obj.text,
+				metadata: { state: obj.state },
+			});
+		}
+	},
+};
+```
+
+**⚠️ Important**: If you override any of these default types, you lose the built-in behavior. Since processors completely override default handling, ensure your custom implementation covers all functionality you need, including adding messages to the chat if desired.
+
+## Recommended File Structure
+
+Cedar encourages organizing custom processors in dedicated files for easier maintenance and debugging:
+
+```
+src/
+  cedar-os/
+    processors/
+      responseProcessors.ts   // All custom response processors
+      index.ts               // Export registration function
+  components/
+    Layout.tsx              // Register processors with CedarCopilot
+```
+
+This structure keeps all Cedar-related logic organized under a `cedar-os` directory, making it easier to maintain, debug, and ensure consistency across your application. Remember that processors completely override default behavior, so plan your implementations to handle all the functionality you need.
 
 
 # Extending Mastra
@@ -3806,247 +4136,278 @@ function ValidatedChat() {
 * Explore [agent input context](/agent-input-context/agent-input-context)
 
 
-# Custom Message Rendering
+# How Messages are Rendered (and Custom Rendering)
 Source: https://docs.cedarcopilot.com/chat/custom-message-rendering
 
-Create custom message components and renderers
+Create custom message components and renderers for the chat interface
 
-Cedar allows you to completely customize how messages are displayed in your chat interface. You can create custom message components, override default renderers, and add interactive elements to messages.
+Cedar allows you to completely customize how messages are displayed in your chat interface. This is used for use cases like Generative UI, or any custom logic you want for the way that messages are rendered to the user.
 
-## Custom Message Components
+Note: This system closely mirrors the architecture of [Custom Response Processing](/agent-backend-connection/custom-response-processing).
 
-Create custom components for specific message types:
+## Base Message Type
+
+All messages in Cedar extend the `BaseMessage` interface from `@messages/types`:
 
 ```tsx
-import { useMessageRenderer } from 'cedar-os';
-
-// Custom component for code execution results
-function CodeResultMessage({ message }) {
-	return (
-		<div className='bg-gray-900 text-green-400 p-4 rounded-lg font-mono'>
-			<div className='text-xs text-gray-500 mb-2'>Execution Result</div>
-			<pre>{message.content}</pre>
-			<button
-				className='mt-2 text-blue-400 hover:text-blue-300'
-				onClick={() => navigator.clipboard.writeText(message.content)}>
-				Copy Result
-			</button>
-		</div>
-	);
-}
-
-// Custom component for interactive surveys
-function SurveyMessage({ message, onResponse }) {
-	const [selectedOption, setSelectedOption] = useState(null);
-
-	return (
-		<div className='border rounded-lg p-4'>
-			<h3 className='font-semibold mb-3'>{message.content.question}</h3>
-			<div className='space-y-2'>
-				{message.content.options.map((option, index) => (
-					<button
-						key={index}
-						className={`block w-full text-left p-2 rounded ${
-							selectedOption === index ? 'bg-blue-100' : 'hover:bg-gray-50'
-						}`}
-						onClick={() => {
-							setSelectedOption(index);
-							onResponse(option);
-						}}>
-						{option}
-					</button>
-				))}
-			</div>
-		</div>
-	);
+interface BaseMessage {
+	id: string; // Unique identifier (auto-generated if not provided)
+	role: MessageRole; // 'bot' | 'user' | 'assistant'
+	content: string; // The text content of the message
+	createdAt?: string; // ISO timestamp (auto-generated)
+	metadata?: Record<string, unknown>; // Optional key-value pairs
+	type: string; // String identifier for renderer matching
 }
 ```
 
-## Registering Custom Renderers
+## Requirements for Custom Messages
 
-Register your custom components with the message renderer:
-
-```tsx
-import { CedarCopilot } from 'cedar-os';
-
-function App() {
-	const customRenderers = {
-		'code-result': CodeResultMessage,
-		survey: SurveyMessage,
-		'file-upload': FileUploadMessage,
-		chart: ChartMessage,
-	};
-
-	return (
-		<CedarCopilot llmProvider={llmProvider} messageRenderers={customRenderers}>
-			{/* Your app content */}
-		</CedarCopilot>
-	);
-}
-```
-
-## Message Renderer Hook
-
-Use the `useMessageRenderer` hook for advanced customization:
+To use the custom message rendering system, your message objects must have a `type` field. This field determines which renderer will be used to display the message.
 
 ```tsx
-import { useMessageRenderer } from 'cedar-os';
-
-function CustomChatBubbles() {
-	const { renderMessage, registerRenderer } = useMessageRenderer();
-
-	// Register a new renderer
-	useEffect(() => {
-		registerRenderer('todo-list', ({ message }) => (
-			<TodoListMessage
-				items={message.content.items}
-				onToggle={(index) => {
-					// Handle todo toggle
-				}}
-			/>
-		));
-	}, [registerRenderer]);
-
-	return (
-		<div className='messages-container'>
-			{messages.map((message) => (
-				<div key={message.id} className='message-wrapper'>
-					{renderMessage(message)}
-				</div>
-			))}
-		</div>
-	);
-}
-```
-
-## Message Types and Structure
-
-Messages in Cedar follow this structure:
-
-```tsx
-interface Message {
-	id: string;
-	type: string; // 'text', 'image', 'file', or custom type
-	role: 'user' | 'assistant' | 'system';
-	content: any; // Content varies by type
-	timestamp: Date;
-	metadata?: {
-		streaming?: boolean;
-		error?: string;
-		[key: string]: any;
-	};
-}
-```
-
-## Built-in Message Types
-
-Cedar provides several built-in message renderers:
-
-### Text Messages
-
-```tsx
+// Valid message - has required 'type' field
 {
-  type: 'text',
-  content: 'Hello, how can I help you?'
+  type: 'alert',
+  role: 'assistant',
+  content: 'This is an alert message',
+  level: 'warning'
 }
-```
 
-### Image Messages
-
-```tsx
+// Invalid - missing 'type' field
 {
-  type: 'image',
-  content: {
-    url: 'https://example.com/image.jpg',
-    alt: 'Description',
-    caption: 'Optional caption'
-  }
+  role: 'assistant',
+  content: 'This message will use default rendering'
 }
 ```
 
-### File Messages
+## Message Renderer Interface
+
+Cedar uses a strongly typed `MessageRenderer` interface that ensures type safety throughout the rendering pipeline:
 
 ```tsx
-{
-  type: 'file',
-  content: {
-    filename: 'document.pdf',
-    size: 1024000,
-    url: 'https://example.com/document.pdf',
-    type: 'application/pdf'
-  }
-}
+export type MessageRenderer<T extends Message = Message> = {
+	type: T['type']; // Must match the message type
+	render: (message: T) => ReactNode; // Receives narrowly typed message
+	namespace?: string; // Optional organization namespace
+	validateMessage?: (message: Message) => message is T; // Receives broadly typed Message for validation
+};
 ```
 
-## Conditional Rendering
+**Key typing features:**
 
-Render different components based on message properties:
+* The `render` function receives your **narrowly typed custom message** (e.g., `AlertMessage`)
+* The `validateMessage` function receives the **broadly typed `Message`** for runtime validation
+
+## Custom Message Type Definition
+
+Cedar exports a `CustomMessage<T, P>` type that allows you to create type-safe custom messages:
 
 ```tsx
-function ConditionalRenderer({ message }) {
-	const { renderMessage } = useMessageRenderer();
+import { CustomMessage } from 'cedar-os';
 
-	// Custom logic for rendering based on user role
-	if (message.role === 'system') {
-		return <SystemNotification message={message} />;
+// T = type string, P = additional properties
+export type CustomMessage<
+	T extends string,
+	P extends object = Record<string, never>
+> = BaseMessage & { type: T } & P;
+
+// Example usage
+type AlertMessage = CustomMessage<
+	'alert',
+	{
+		level: 'info' | 'warning' | 'error';
 	}
+>;
 
-	// Custom rendering for messages with attachments
-	if (message.metadata?.hasAttachments) {
-		return <MessageWithAttachments message={message} />;
+type TodoListMessage = CustomMessage<
+	'todo-list',
+	{
+		items: Array<{ id: string; text: string; completed: boolean }>;
+		onToggle?: (id: string) => void;
 	}
-
-	// Fall back to default renderer
-	return renderMessage(message);
-}
+>;
 ```
 
-## Interactive Message Actions
+## Message Renderer Factory Function
 
-Add interactive elements to messages:
+Cedar exports a `createMessageRenderer` factory function to create type-safe renderers:
 
 ```tsx
-function InteractiveMessage({ message }) {
-	const { addMessage, callLLM } = useCedarStore();
+import { createMessageRenderer } from 'cedar-os';
 
-	const handleFollowUp = async (question) => {
-		addMessage({
-			type: 'text',
-			role: 'user',
-			content: question,
-		});
-
-		await callLLM({
-			prompt: question,
-			context: message.content, // Use original message as context
-		});
-	};
-
-	return (
-		<div className='message-content'>
-			<p>{message.content}</p>
-
-			<div className='message-actions mt-2 space-x-2'>
-				<button
-					onClick={() => handleFollowUp('Can you explain this further?')}
-					className='text-blue-600 hover:text-blue-800 text-sm'>
-					Explain Further
-				</button>
-				<button
-					onClick={() => handleFollowUp('Give me an example')}
-					className='text-blue-600 hover:text-blue-800 text-sm'>
-					Show Example
-				</button>
-			</div>
-		</div>
-	);
-}
+// Create a renderer with full type safety
+const AlertRenderer = createMessageRenderer<AlertMessage>({
+	type: 'alert',
+	namespace: 'my-app',
+	render: (message) => {
+		// message is narrowly typed as AlertMessage
+		return <div className={`alert-${message.level}`}>{message.content}</div>;
+	},
+	validateMessage: (msg): msg is AlertMessage => {
+		// msg is broadly typed as Message for validation
+		return msg.type === 'alert' && 'level' in msg;
+	},
+});
 ```
 
-## Next Steps
+## How Message Rendering Works Internally
 
-* Learn about [agent input context](/chat/agent-input-context)
-* Explore [subscribing to state](/chat/subscribing-state)
+The chat system uses the following process to render messages:
+
+1. **Message Reception**: When a message is added to the chat, the system examines its `type` field
+2. **Renderer Lookup**: The system searches for a registered renderer that matches the message type
+3. **Validation**: If a renderer is found and has a validation function, it checks if the message structure is valid
+4. **Rendering**: If validation passes (or no validation exists), the renderer's `render` function is called
+5. **Fallback**: If no matching renderer is found or validation fails, the default text renderer is used
+
+## Full Implementation Examples
+
+Here's an example of creating a custom message renderer for an AlertMessage.
+
+```tsx
+import { createMessageRenderer, CustomMessage } from 'cedar-os';
+
+// Define custom message type
+type AlertMessage = CustomMessage<'alert', { level: string }>;
+
+// Create the renderer
+const AlertMessageRenderer = createMessageRenderer<AlertMessage>({
+	type: 'alert',
+	namespace: 'product-roadmap',
+	render: (message) => {
+		const levelColors = {
+			info: 'bg-blue-100 text-blue-800',
+			warning: 'bg-yellow-100 text-yellow-800',
+			error: 'bg-red-100 text-red-800',
+		};
+
+		return (
+			<div
+				className={`p-3 rounded-lg ${
+					levelColors[message.level] || levelColors.info
+				}`}>
+				<div className='font-semibold'>Alert</div>
+				<div>{message.content}</div>
+			</div>
+		);
+	},
+	validateMessage: (msg): msg is AlertMessage => {
+		return (
+			msg.type === 'alert' && 'level' in msg && typeof msg.level === 'string'
+		);
+	},
+});
+
+// Register with CedarCopilot
+<CedarCopilot
+	messageRenderers={[AlertMessageRenderer]}
+	// ... other props
+>
+	{children}
+</CedarCopilot>;
+```
+
+## Default Message Types and Renderers
+
+Cedar automatically handles these message types with default behavior. Each type has a corresponding default renderer:
+
+### `"message"` Type
+
+* **Behavior**: Standard text messages with role-based styling
+* **Properties**: `content: string`, `role: 'user' | 'assistant' | 'bot'`
+* **Renderer**: Built-in text message renderer with role-based styling
+* **Warning**: Overriding this type will disable default text message rendering
+
+### `"action"` Type
+
+* **Behavior**: Executes state actions and displays completion status
+* **Properties**: `stateKey: string`, `setterKey: string`, `args?: unknown[]`
+* **Default Renderer**: `ActionRenderer` shows action completion with shimmer effects
+
+**Action Factory Functions**: Cedar provides special factory functions for action messages:
+
+```tsx
+import { createActionMessageRenderer, ActionMessageFor } from 'cedar-os';
+
+// Specific action message type using helper
+type UpdateCounterAction = ActionMessageFor<
+	'counter', // StateKey
+	'increment', // SetterKey
+	[number] // Args
+>;
+
+// Create custom action renderer with filtering
+const CounterActionRenderer = createActionMessageRenderer<UpdateCounterAction>({
+	namespace: 'counter',
+	setterKey: 'increment', // Only handle increment actions
+	render: (message) => (
+		<div className='action-message'>
+			✅ Incremented counter by {message.args?.[0] || 1}
+		</div>
+	),
+});
+```
+
+### `"progress_update"` Type
+
+* **Behavior**: Shows progress indicators with shimmer effects
+* **Properties**: `content: string`, `metadata.state?: 'in_progress' | 'complete' | 'error'`
+* **Default Renderer**: `ProgressUpdateRenderer` with animated shimmer text
+
+### Additional Built-in Renderers
+
+Cedar also includes renderers for streaming events:
+
+#### Mastra Event Renderer
+
+Cedar automatically receives and renders all Mastra streamed events. Any of these can be customized or overridden with your own renderers:
+
+**Supported Mastra Event Types:**
+
+* `'start'` - Agent run started
+* `'step-start'` - Agent step started
+* `'tool-call'` - Tool being called
+* `'tool-result'` - Tool call result
+* `'step-finish'` - Agent step completed
+* `'tool-output'` - Tool output received
+* `'step-result'` - Step result available
+* `'step-output'` - Step output received
+* `'finish'` - Agent run completed
+
+**Customization**: You can override any specific Mastra event type by creating a custom renderer with the same `type`. For example, to customize just the `'tool-call'` event:
+
+```tsx
+const CustomToolCallRenderer = createMessageRenderer<
+	CustomMastraMessage<'tool-call'>
+>({
+	type: 'tool-call',
+	render: (
+		message // typed
+	) => (
+		<div className='custom-tool-call'>
+			🔧 Calling tool: {message.payload.toolName}
+		</div>
+	),
+});
+```
+
+**⚠️ Important**: If you override any of these default types, you lose the built-in behavior. Ensure your custom implementation covers all cases you want to support.
+
+## Recommended File Structure
+
+Cedar encourages organizing custom renderers in dedicated files for easier maintenance and debugging:
+
+```
+src/
+  cedar-os/
+    renderers/
+      messageRenderers.tsx    // All custom message renderers
+      index.ts               // Export registration function
+  components/
+    Layout.tsx              // Register renderers with CedarCopilot
+```
+
+This structure keeps all Cedar-related logic organized under a `cedar-os` directory, making it easier to maintain, debug, and ensure consistency across your application.
 
 
 # Message Storage Configuration
@@ -5983,445 +6344,2693 @@ We think we've had a glimpse of the future, and are working on brand new interfa
 That's why we've built a pretty generalisable, extensible system as a base, but we expect Cedar to change a lot over the coming months. We hope you'll stick with us to get some of the new exciting things coming out.
 
 
-# Radial Menu
-Source: https://docs.cedarcopilot.com/spells/radial-menu
+# Creating Custom Spells
+Source: https://docs.cedarcopilot.com/spells/creating-custom-spells
 
-Using the Radial Menu for spell interactions
+Learn how to build your own magical interactions with Cedar-OS spells
 
-The **Radial Menu** is Cedar's flagship spell interface that enables instant AI command execution through an intuitive circular menu system. It provides users with lightning-fast access to complex queries and context-dependent actions with sub-100ms response times.
+# Creating Custom Spells
 
-<img src="https://vrhlhwfhghqbpdpfnpdq.supabase.co/storage/v1/object/public/logos//radialMenu.gif" alt="Radial Menu Demo" />
+Spells in Cedar-OS are created using the `useSpell` hook, which provides a declarative API for binding gestures to behaviors. This guide will walk you through creating custom spells from simple to advanced.
 
-## What is the Radial Menu?
+## Basic Spell Structure
 
-The Radial Menu is a **context-aware command palette** that appears as a circular interface around your cursor. It's designed to give users magical control over AI interactions without requiring text input - you simply right-click or use a hotkey to instantly access powerful AI commands.
-
-### Key Features
-
-1. **Instant Activation**: Right-click or hotkey activation
-2. **Complex Query Support**: Pre-configured prompts for sophisticated AI interactions at the users fingertips
-3. **Context-Dependent Commands**: Menu options can change based on your current application state
-4. **Sub-100ms Execution**: Commands execute immediately without delay
-5. **State-Aware**: Automatically includes relevant application context
-
-## How It Works
-
-### 1. Activation Methods
-
-The Radial Menu can be triggered through multiple methods:
+Every spell requires three core elements:
 
 ```tsx
-import { useRadialMenu } from 'cedar-os';
+import { useSpell, Hotkey, ActivationMode } from 'cedar-os';
 
-function MyComponent() {
-	const { openRadialMenu, registerHotkey } = useRadialMenu();
+function MySpell() {
+	const { isActive, activate, deactivate, toggle } = useSpell({
+		// 1. Unique identifier
+		id: 'my-unique-spell',
 
-	// Method 1: Right-click activation
-	const handleContextMenu = (e: React.MouseEvent) => {
-		e.preventDefault();
-		openRadialMenu({
-			x: e.clientX,
-			y: e.clientY,
-			context: getCurrentContext(),
-		});
-	};
+		// 2. Activation conditions
+		activationConditions: {
+			events: [Hotkey.SPACE],
+			mode: ActivationMode.TOGGLE,
+		},
 
-	// Method 2: Hotkey activation
-	useEffect(() => {
-		registerHotkey('cmd+k', () => {
-			openRadialMenu({
-				x: window.innerWidth / 2,
-				y: window.innerHeight / 2,
-				context: getCurrentContext(),
-			});
-		});
-	}, []);
-
-	return <div onContextMenu={handleContextMenu}>{/* Your content */}</div>;
-}
-```
-
-### 2. Context-Dependent Commands
-
-The Radial Menu automatically adapts its available commands based on your current context:
-
-```tsx
-import { useRadialMenuProvider } from 'cedar-os';
-
-function DocumentEditor() {
-	const [selectedText, setSelectedText] = useState('');
-	const [currentDocument, setCurrentDocument] = useState(null);
-
-	// Register context-dependent commands
-	useRadialMenuProvider({
-		id: 'document-editor',
-		getCommands: (context) => {
-			const commands = [];
-
-			// Text selection commands
-			if (context.selectedText) {
-				commands.push(
-					{
-						id: 'explain-selection',
-						label: 'Explain This',
-						icon: '🤔',
-						prompt: `Explain the following text in simple terms: "${context.selectedText}"`,
-						color: '#3b82f6',
-					},
-					{
-						id: 'improve-writing',
-						label: 'Improve Writing',
-						icon: '✨',
-						prompt: `Improve the writing and clarity of: "${context.selectedText}"`,
-						color: '#10b981',
-					}
-				);
-			}
-
-			// Document-level commands
-			if (context.document) {
-				commands.push(
-					{
-						id: 'summarize-doc',
-						label: 'Summarize Document',
-						icon: '📝',
-						prompt: `Summarize the key points of this document: ${context.document.content}`,
-						color: '#f59e0b',
-					},
-					{
-						id: 'find-issues',
-						label: 'Find Issues',
-						icon: '🔍',
-						prompt: `Review this document for potential issues, inconsistencies, or improvements: ${context.document.content}`,
-						color: '#ef4444',
-					}
-				);
-			}
-
-			return commands;
+		// 3. Lifecycle callbacks
+		onActivate: (state) => {
+			console.log('Activated!', state.triggerData);
+		},
+		onDeactivate: () => {
+			console.log('Deactivated!');
 		},
 	});
 
-	return <div>{/* Document editor content */}</div>;
+	return isActive ? <YourMagicUI /> : null;
 }
 ```
 
-### 3. Instant Execution
+## The useSpell Hook
 
-Commands execute immediately when selected, with results appearing in your preferred chat interface:
+The `useSpell` hook is your primary interface for creating spells:
+
+### Parameters
 
 ```tsx
-import { useRadialMenu, useCedarStore } from 'cedar-os';
+interface UseSpellOptions {
+	/** Unique identifier for the spell */
+	id: string;
 
-function QuickActions() {
-	const { addMessage, sendMessage } = useCedarStore();
-	const { registerCommand } = useRadialMenu();
+	/** Conditions that trigger activation */
+	activationConditions: ActivationConditions;
 
-	useEffect(() => {
-		// Register instant-execution commands
-		registerCommand({
-			id: 'quick-note',
-			label: 'Quick Note',
-			icon: '📋',
-			execute: async (context) => {
-				// Immediate execution - no text input required
-				const prompt = `Create a quick note about: ${context.selectedContent}`;
+	/** Called when spell activates */
+	onActivate?: (state: ActivationState) => void;
 
-				addMessage({
-					role: 'user',
-					type: 'text',
-					content: prompt,
-				});
+	/** Called when spell deactivates */
+	onDeactivate?: () => void;
 
-				// Execute within 100ms
-				await sendMessage({
-					route: '/quick-actions',
-					systemPrompt: 'You are a helpful note-taking assistant.',
-				});
-			},
-		});
-	}, []);
+	/** Prevent default browser behavior */
+	preventDefaultEvents?: boolean;
+
+	/** Ignore activation in input elements */
+	ignoreInputElements?: boolean;
 }
 ```
 
-## Implementation Guide
-
-### Basic Setup
-
-1. **Install the Radial Menu Provider**:
+### Return Values
 
 ```tsx
-import { RadialMenuProvider } from 'cedar-os';
+interface UseSpellReturn {
+	/** Current activation state */
+	isActive: boolean;
 
-function App() {
+	/** Programmatically activate */
+	activate: () => void;
+
+	/** Programmatically deactivate */
+	deactivate: () => void;
+
+	/** Toggle activation state */
+	toggle: () => void;
+}
+```
+
+## Activation Conditions
+
+Activation conditions define how users trigger your spell:
+
+### Events
+
+Spells can respond to multiple event types:
+
+```tsx
+import { Hotkey, MouseEvent, SelectionEvent } from 'cedar-os';
+
+// Single key activation
+activationConditions: {
+	events: [Hotkey.Q];
+}
+
+// Keyboard combination
+activationConditions: {
+	events: ['ctrl+k', 'cmd+k']; // Support both Windows and Mac
+}
+
+// Mouse events
+activationConditions: {
+	events: [MouseEvent.RIGHT_CLICK];
+}
+
+// Text selection
+activationConditions: {
+	events: [SelectionEvent.TEXT_SELECT];
+}
+
+// Multiple triggers
+activationConditions: {
+	events: [Hotkey.SPACE, MouseEvent.RIGHT_CLICK];
+}
+```
+
+### Activation Modes
+
+Control how your spell's lifecycle works:
+
+```tsx
+import { ActivationMode } from 'cedar-os';
+
+// TOGGLE: Press to activate, press again to deactivate
+activationConditions: {
+  events: [Hotkey.T],
+  mode: ActivationMode.TOGGLE
+}
+
+// HOLD: Active only while key/button is held
+activationConditions: {
+  events: [Hotkey.SPACE],
+  mode: ActivationMode.HOLD
+}
+
+// TRIGGER: Fire once with optional cooldown
+activationConditions: {
+  events: [Hotkey.ENTER],
+  mode: ActivationMode.TRIGGER,
+  cooldown: 1000 // Prevent spam (milliseconds)
+}
+```
+
+## Complete Examples
+
+### Example 1: Command Palette Spell
+
+A command palette that appears with `Cmd+K`:
+
+```tsx
+import { useSpell, ActivationMode } from 'cedar-os';
+import { useState } from 'react';
+
+function CommandPaletteSpell() {
+	const [query, setQuery] = useState('');
+
+	const { isActive, deactivate } = useSpell({
+		id: 'command-palette',
+		activationConditions: {
+			events: ['cmd+k', 'ctrl+k'],
+			mode: ActivationMode.TOGGLE,
+		},
+		onActivate: () => {
+			setQuery(''); // Reset on open
+		},
+		preventDefaultEvents: true, // Prevent browser default for Ctrl+K
+	});
+
+	if (!isActive) return null;
+
 	return (
-		<RadialMenuProvider>
-			<YourAppContent />
-		</RadialMenuProvider>
+		<div className='fixed inset-0 z-50 flex items-center justify-center bg-black/50'>
+			<div className='w-96 bg-white rounded-lg shadow-xl p-4'>
+				<input
+					autoFocus
+					value={query}
+					onChange={(e) => setQuery(e.target.value)}
+					onKeyDown={(e) => {
+						if (e.key === 'Escape') deactivate();
+					}}
+					placeholder='Type a command...'
+					className='w-full p-2 border rounded'
+				/>
+				{/* Command results here */}
+			</div>
+		</div>
 	);
 }
 ```
 
-2. **Configure Default Commands**:
+### Example 2: Context Menu Spell
+
+A context menu that appears on right-click:
 
 ```tsx
-import { useRadialMenuConfig } from 'cedar-os';
+import { useSpell, MouseEvent, ActivationMode, useCedarStore } from 'cedar-os';
 
-function AppConfig() {
-	useRadialMenuConfig({
-		// Global hotkey
-		hotkey: 'cmd+k',
+function ContextMenuSpell() {
+	const [position, setPosition] = useState({ x: 0, y: 0 });
 
-		// Default commands available everywhere
-		defaultCommands: [
-			{
-				id: 'ask-anything',
-				label: 'Ask Anything',
-				icon: '💬',
-				prompt: 'I have a question about: ',
-				requiresInput: true,
-			},
-			{
-				id: 'explain-page',
-				label: 'Explain This Page',
-				icon: '📖',
-				execute: async (context) => {
-					const pageContent = extractPageContent();
-					return `Explain what this page is about: ${pageContent}`;
-				},
-			},
-		],
+	const { isActive } = useSpell({
+		id: 'context-menu',
+		activationConditions: {
+			events: [MouseEvent.RIGHT_CLICK],
+			mode: ActivationMode.TOGGLE,
+		},
+		onActivate: (state) => {
+			// Capture mouse position from trigger data
+			if (state.triggerData?.mousePosition) {
+				setPosition(state.triggerData.mousePosition);
+			}
+		},
+		preventDefaultEvents: true, // Prevent browser context menu
+	});
 
-		// Appearance settings
-		appearance: {
-			radius: 120,
-			itemSize: 60,
-			animationDuration: 200,
-			theme: 'auto', // 'light' | 'dark' | 'auto'
+	if (!isActive) return null;
+
+	return (
+		<div
+			className='fixed bg-white rounded shadow-lg p-2 z-50'
+			style={{ left: position.x, top: position.y }}>
+			<button className='block w-full text-left p-2 hover:bg-gray-100'>
+				Copy
+			</button>
+			<button className='block w-full text-left p-2 hover:bg-gray-100'>
+				Paste
+			</button>
+			{/* More menu items */}
+		</div>
+	);
+}
+```
+
+### Example 3: AI Assistant Spell
+
+A spell that integrates with Cedar's AI capabilities:
+
+```tsx
+import { useSpell, SelectionEvent, useCedarStore } from 'cedar-os';
+
+function AIAssistantSpell() {
+	const { sendMessage } = useCedarStore();
+	const [selectedText, setSelectedText] = useState('');
+
+	const { isActive } = useSpell({
+		id: 'ai-assistant',
+		activationConditions: {
+			events: [SelectionEvent.TEXT_SELECT],
+			mode: ActivationMode.TOGGLE,
+		},
+		onActivate: (state) => {
+			if (state.triggerData?.selectedText) {
+				setSelectedText(state.triggerData.selectedText);
+			}
+		},
+		ignoreInputElements: false, // Allow in text areas
+	});
+
+	if (!isActive || !selectedText) return null;
+
+	const handleAction = (action: string) => {
+		sendMessage({
+			content: `${action}: ${selectedText}`,
+			role: 'user',
+		});
+	};
+
+	return (
+		<div className='fixed bottom-4 right-4 bg-white rounded-lg shadow-xl p-4'>
+			<h3 className='font-bold mb-2'>AI Assistant</h3>
+			<p className='text-sm text-gray-600 mb-3'>
+				Selected: "{selectedText.slice(0, 50)}..."
+			</p>
+			<div className='space-y-2'>
+				<button
+					onClick={() => handleAction('Explain')}
+					className='block w-full text-left p-2 bg-blue-50 rounded hover:bg-blue-100'>
+					🤔 Explain this
+				</button>
+				<button
+					onClick={() => handleAction('Improve')}
+					className='block w-full text-left p-2 bg-green-50 rounded hover:bg-green-100'>
+					✨ Improve writing
+				</button>
+				<button
+					onClick={() => handleAction('Translate to Spanish')}
+					className='block w-full text-left p-2 bg-purple-50 rounded hover:bg-purple-100'>
+					🌍 Translate
+				</button>
+			</div>
+		</div>
+	);
+}
+```
+
+## Advanced Patterns
+
+### Combining Multiple Spells
+
+You can compose multiple spells for complex interactions:
+
+```tsx
+function MultiSpellComponent() {
+	// Primary spell for activation
+	const mainSpell = useSpell({
+		id: 'main-menu',
+		activationConditions: {
+			events: [Hotkey.SPACE],
+			mode: ActivationMode.HOLD,
 		},
 	});
-}
-```
 
-### Advanced Context Integration
-
-Integrate with Cedar's state system for powerful context-aware commands:
-
-```tsx
-import { useCedarState, useRadialMenuProvider } from 'cedar-os';
-
-function TodoApp() {
-	const [todos, setTodos] = useCedarState('todos', []);
-	const [selectedTodo, setSelectedTodo] = useCedarState('selectedTodo', null);
-
-	useRadialMenuProvider({
-		id: 'todo-app',
-		getCommands: (context) => {
-			const commands = [];
-
-			// Context: Todo selected
-			if (selectedTodo) {
-				commands.push(
-					{
-						id: 'analyze-todo',
-						label: 'Analyze Task',
-						icon: '🔍',
-						prompt: `Analyze this task and suggest improvements: ${selectedTodo.title} - ${selectedTodo.description}`,
-						color: '#8b5cf6',
-					},
-					{
-						id: 'break-down-todo',
-						label: 'Break Down',
-						icon: '📋',
-						execute: async () => {
-							const prompt = `Break down this task into smaller subtasks: ${selectedTodo.title}`;
-							// Execute immediately
-							return prompt;
-						},
-					}
-				);
+	// Secondary spell that only works when main is active
+	const subSpell = useSpell({
+		id: 'sub-action',
+		activationConditions: {
+			events: [Hotkey.ENTER],
+			mode: ActivationMode.TRIGGER,
+		},
+		onActivate: () => {
+			if (mainSpell.isActive) {
+				// Perform sub-action
 			}
-
-			// Context: Multiple todos
-			if (todos.length > 0) {
-				commands.push({
-					id: 'prioritize-todos',
-					label: 'Prioritize All',
-					icon: '⚡',
-					prompt: `Help me prioritize these tasks: ${todos
-						.map((t) => t.title)
-						.join(', ')}`,
-				});
-			}
-
-			return commands;
 		},
 	});
 
-	return <div>{/* Todo app content */}</div>;
+	return mainSpell.isActive ? <Menu /> : null;
 }
 ```
 
-### Custom Command Types
+### Dynamic Activation Conditions
 
-Create different types of commands for various use cases:
-
-```tsx
-import { RadialCommand } from 'cedar-os';
-
-// Instant execution command
-const instantCommand: RadialCommand = {
-	id: 'format-code',
-	label: 'Format Code',
-	icon: '🎨',
-	execute: async (context) => {
-		const code = context.selectedText;
-		// Process immediately
-		return formatCode(code);
-	},
-	executionTime: 'instant', // <100ms
-};
-
-// Streaming command
-const streamingCommand: RadialCommand = {
-	id: 'explain-complex',
-	label: 'Deep Explanation',
-	icon: '🧠',
-	prompt: (context) =>
-		`Provide a detailed explanation of: ${context.selectedText}`,
-	executionType: 'streaming', // Shows results as they come in
-	estimatedTime: '5-10s',
-};
-
-// Interactive command
-const interactiveCommand: RadialCommand = {
-	id: 'custom-query',
-	label: 'Custom Query',
-	icon: '💭',
-	requiresInput: true,
-	inputPlaceholder: 'What would you like to know?',
-	execute: async (context, userInput) => {
-		return `${userInput} Context: ${context.selectedText}`;
-	},
-};
-```
-
-## Integration with Cedar Features
-
-### With Mentions System
+Activation conditions can be changed dynamically:
 
 ```tsx
-import { useStateBasedMentionProvider, useRadialMenuProvider } from 'cedar-os';
+function DynamicSpell({ userPreference }) {
+	const activationKey = userPreference === 'vim' ? Hotkey.J : Hotkey.ARROW_DOWN;
 
-function IntegratedApp() {
-	const [documents] = useCedarState('documents', []);
-
-	// Enable @mentions for documents
-	useStateBasedMentionProvider({
-		stateKey: 'documents',
-		trigger: '@',
-		labelField: 'title',
+	const spell = useSpell({
+		id: 'navigation',
+		activationConditions: {
+			events: [activationKey],
+			mode: ActivationMode.TRIGGER,
+		},
+		onActivate: () => {
+			// Navigate down
+		},
 	});
 
-	// Radial menu can reference mentioned items
-	useRadialMenuProvider({
-		id: 'document-actions',
-		getCommands: (context) => [
-			{
-				id: 'compare-docs',
-				label: 'Compare Documents',
-				icon: '⚖️',
-				condition: () => context.mentions?.length >= 2,
-				prompt: `Compare these documents: ${context.mentions
-					.map((m) => m.label)
-					.join(' vs ')}`,
-			},
-		],
-	});
+	// Spell will re-register when preference changes
 }
 ```
 
-### With Voice Integration
+### Accessing Cedar Store
+
+Spells can interact with the Cedar store for AI operations:
 
 ```tsx
-import { useVoiceCommands, useRadialMenu } from 'cedar-os';
+import { useCedarStore } from 'cedar-os';
 
-function VoiceEnabledRadialMenu() {
-	const { registerVoiceCommand } = useVoiceCommands();
-	const { openRadialMenu } = useRadialMenu();
+function StoreIntegratedSpell() {
+	const store = useCedarStore();
 
-	useEffect(() => {
-		// Voice activation
-		registerVoiceCommand('open menu', () => {
-			openRadialMenu({
-				x: window.innerWidth / 2,
-				y: window.innerHeight / 2,
-				activationMethod: 'voice',
+	const spell = useSpell({
+		id: 'ai-spell',
+		activationConditions: {
+			events: ['alt+a'],
+			mode: ActivationMode.TOGGLE,
+		},
+		onActivate: () => {
+			// Access messages
+			const lastMessage = store.messages[store.messages.length - 1];
+
+			// Send new message
+			store.sendMessage({
+				content: 'Activated spell!',
+				role: 'user',
 			});
-		});
 
-		// Voice command execution
-		registerVoiceCommand('explain this', async () => {
-			const context = getCurrentContext();
-			return `Explain: ${context.selectedText}`;
-		});
-	}, []);
+			// Access other store slices
+			const styling = store.styling;
+		},
+	});
 }
 ```
 
 ## Best Practices
 
-### 1. Command Organization
+### 1. Use Descriptive IDs
 
-* **Group related commands** by color and position
-* **Limit to 8-12 commands** per context to avoid cognitive overload
-* **Use clear, action-oriented labels** (e.g., "Explain This" not "Explanation")
+```tsx
+// ✅ Good
+id: 'command-palette-main';
+id: 'context-menu-editor';
 
-### 2. Context Sensitivity
+// ❌ Bad
+id: 'spell1';
+id: 'menu';
+```
 
-* **Always check context availability** before showing commands
-* **Provide fallback commands** when no specific context is available
-* **Use progressive disclosure** - show more options for power users
+### 2. Handle Cleanup
 
-### 3. Performance Optimization
+```tsx
+// The hook automatically handles cleanup, but you can add custom logic
+onDeactivate: () => {
+	// Reset state
+	setMenuItems([]);
+	// Clear timers
+	clearTimeout(timeoutId);
+};
+```
 
-* **Cache command generation** for frequently accessed contexts
-* **Preload common prompts** to ensure sub-100ms execution
-* **Use lazy loading** for complex command calculations
+### 3. Prevent Conflicts
 
-### 4. User Experience
+```tsx
+// Use ignoreInputElements to avoid conflicts in forms
+ignoreInputElements: true; // Default
 
-* **Provide visual feedback** during command execution
-* **Show keyboard shortcuts** in command labels when available
-* **Animate menu appearance** for smooth interactions
+// Use preventDefaultEvents to override browser shortcuts
+preventDefaultEvents: true; // When using Ctrl+S, etc.
+```
+
+### 4. Provide Visual Feedback
+
+```tsx
+const { isActive } = useSpell({...});
+
+// Always indicate spell state to users
+return (
+  <>
+    {isActive && <StatusIndicator />}
+    {isActive && <SpellUI />}
+  </>
+);
+```
+
+### 5. Consider Accessibility
+
+```tsx
+// Provide alternative activation methods
+activationConditions: {
+	events: [
+		'ctrl+space', // Keyboard users
+		MouseEvent.RIGHT_CLICK, // Mouse users
+		'alt+enter', // Screen reader friendly
+	];
+}
+```
+
+## API Reference
+
+### Available Hotkeys
+
+All single keys (A-Z, 0-9) plus:
+
+* Function keys: `F1` - `F12`
+* Special keys: `ESCAPE`, `ENTER`, `SPACE`, `TAB`, `DELETE`, `BACKSPACE`
+* Arrow keys: `ARROW_UP`, `ARROW_DOWN`, `ARROW_LEFT`, `ARROW_RIGHT`
+* Modifiers: `CTRL`, `CMD`, `META`, `ALT`, `SHIFT`
+
+### Mouse Events
+
+* `RIGHT_CLICK` - Right mouse button
+* `DOUBLE_CLICK` - Double left click
+* `MIDDLE_CLICK` - Middle mouse button
+* `SHIFT_CLICK` - Shift + left click
+* `CTRL_CLICK` - Ctrl + left click
+* `CMD_CLICK` - Cmd + left click (Mac)
+* `ALT_CLICK` - Alt + left click
+
+### Selection Events
+
+* `TEXT_SELECT` - Text selection in document
 
 ## Next Steps
 
-* Learn about [other spell types](/spells/spells)
-* Explore [agent input context](/agent-input-context/agent-input-context) for advanced context handling
-* Check out [voice integration](/voice/voice-integration) for hands-free operation
+* Explore the [Spell Architecture](/spells/spell-architecture) to understand the internals
+* Check out the [Radial Menu](/spells/radial-menu) implementation for a complex example
+* Visit the [Cedar Playground](/examples/cedar-playground) to see spells in action
 
 
-# Spells
-Source: https://docs.cedarcopilot.com/spells/spells
+# Questioning Spell
+Source: https://docs.cedarcopilot.com/spells/questioning-spell
 
-Overview of Spells system
+An interactive cursor that reveals hidden information on hover
 
-Spells are our aspirational name for intuitive and powerful interfaces for users to **control AI without text input**. They're called "spells" because we want the user to feel like they're casting a spell.
+# Questioning Spell
 
-One of the goals of Cedar is to give people ways to be creative and design human software, and we hope that this will be filled by innovative, fun solutions.
+The `QuestioningSpell` component transforms your cursor into an interactive exploration tool that reveals hidden information when hovering over elements. It's perfect for creating educational interfaces, providing contextual help, or building discovery-based experiences.
 
-I could talk more about them, but here are some first initial versions.
+## Features
 
-### Examples
+* **Interactive Cursor**: Custom reticle cursor with smooth animations
+* **Data Attribute Detection**: Automatically finds `data-question` attributes
+* **Visual Feedback**: Rotating reticle that locks onto targets
+* **Tooltip Display**: Shows contextual information on hover
+* **Theme Aware**: Adapts to Cedar's color scheme
+* **Keyboard Activation**: Default 'Q' key toggle
 
-* [Radial Menu](./radial-menu)
+## Installation
+
+```tsx
+import { QuestioningSpell } from 'cedar-os-components/spells';
+```
+
+## Basic Usage
+
+```tsx
+import { QuestioningSpell } from 'cedar-os-components/spells';
+
+function MyComponent() {
+	return (
+		<>
+			{/* Add the spell to your app */}
+			<QuestioningSpell />
+
+			{/* Add data-question attributes to elements */}
+			<div className='p-4'>
+				<button
+					data-question='This button submits the form and saves your data'
+					className='bg-blue-500 text-white px-4 py-2 rounded'>
+					Save
+				</button>
+
+				<span
+					data-question='This metric shows the total number of active users in the last 30 days'
+					className='font-bold'>
+					Active Users: 1,234
+				</span>
+			</div>
+		</>
+	);
+}
+```
+
+Press 'Q' to activate the questioning mode, then hover over elements to see their explanations.
+
+## Props
+
+| Prop                   | Type                   | Required | Default               | Description                               |
+| ---------------------- | ---------------------- | -------- | --------------------- | ----------------------------------------- |
+| `spellId`              | `string`               | No       | `'questioning-spell'` | Unique identifier for this spell instance |
+| `activationConditions` | `ActivationConditions` | No       | Q key toggle          | Custom activation conditions              |
+
+## Customization
+
+### Custom Activation
+
+Change the activation key or mode:
+
+```tsx
+import { Hotkey, ActivationMode } from 'cedar-os';
+
+<QuestioningSpell
+	spellId='help-cursor'
+	activationConditions={{
+		events: [Hotkey.H], // Press 'H' instead of 'Q'
+		mode: ActivationMode.TOGGLE,
+	}}
+/>;
+```
+
+### Hold Mode
+
+Use hold mode for temporary activation:
+
+```tsx
+<QuestioningSpell
+	activationConditions={{
+		events: [Hotkey.SHIFT],
+		mode: ActivationMode.HOLD, // Active only while holding Shift
+	}}
+/>
+```
+
+### Multiple Triggers
+
+Support multiple activation methods:
+
+```tsx
+<QuestioningSpell
+	activationConditions={{
+		events: [Hotkey.Q, 'alt+h', 'f1'],
+		mode: ActivationMode.TOGGLE,
+	}}
+/>
+```
+
+## Advanced Examples
+
+### Educational Interface
+
+Create an educational UI with detailed explanations:
+
+```tsx
+function MathLesson() {
+	return (
+		<>
+			<QuestioningSpell />
+
+			<div className='lesson'>
+				<h2>Quadratic Formula</h2>
+
+				<div className='formula'>
+					<span data-question="The coefficient 'a' represents the quadratic term">
+						a
+					</span>
+					<span>x²</span>
+					<span> + </span>
+					<span data-question="The coefficient 'b' represents the linear term">
+						b
+					</span>
+					<span>x</span>
+					<span> + </span>
+					<span data-question="The coefficient 'c' is the constant term">
+						c
+					</span>
+					<span> = 0</span>
+				</div>
+
+				<div
+					className='solution'
+					data-question='This formula finds the x-values where the parabola crosses the x-axis'>
+					x = (-b ± √(b² - 4ac)) / 2a
+				</div>
+			</div>
+		</>
+	);
+}
+```
+
+### Dashboard with Metrics
+
+Add context to complex data visualizations:
+
+```tsx
+function Dashboard() {
+	return (
+		<>
+			<QuestioningSpell />
+
+			<div className='grid grid-cols-3 gap-4'>
+				<div
+					className='metric-card'
+					data-question='Revenue from the last 30 days compared to the previous period'>
+					<h3>Monthly Revenue</h3>
+					<p className='text-2xl'>$45,231</p>
+					<span className='text-green-500'>+12.5%</span>
+				</div>
+
+				<div
+					className='metric-card'
+					data-question='Average time users spend on the platform per session'>
+					<h3>Avg. Session Duration</h3>
+					<p className='text-2xl'>8m 34s</p>
+					<span className='text-red-500'>-5.2%</span>
+				</div>
+
+				<div
+					className='metric-card'
+					data-question='Percentage of users who completed the onboarding flow'>
+					<h3>Onboarding Completion</h3>
+					<p className='text-2xl'>73%</p>
+					<span className='text-green-500'>+8.1%</span>
+				</div>
+			</div>
+		</>
+	);
+}
+```
+
+### Form with Field Help
+
+Provide inline help for form fields:
+
+```tsx
+function RegistrationForm() {
+	return (
+		<>
+			<QuestioningSpell />
+
+			<form className='space-y-4'>
+				<div>
+					<label
+						htmlFor='username'
+						data-question='Choose a unique username between 3-20 characters. This will be your public identifier.'>
+						Username *
+					</label>
+					<input id='username' type='text' />
+				</div>
+
+				<div>
+					<label
+						htmlFor='email'
+						data-question="We'll use this email for account recovery and important notifications only.">
+						Email Address *
+					</label>
+					<input id='email' type='email' />
+				</div>
+
+				<div>
+					<label
+						htmlFor='timezone'
+						data-question='Your timezone helps us schedule notifications and display times correctly.'>
+						Timezone
+					</label>
+					<select id='timezone'>
+						<option>Select timezone...</option>
+					</select>
+				</div>
+
+				<button
+					type='submit'
+					data-question="Submit the form to create your account. You'll receive a confirmation email.">
+					Create Account
+				</button>
+			</form>
+		</>
+	);
+}
+```
+
+### Dynamic Questions
+
+Generate questions based on data:
+
+```tsx
+function ProductList({ products }) {
+	return (
+		<>
+			<QuestioningSpell />
+
+			<div className='grid grid-cols-4 gap-4'>
+				{products.map((product) => (
+					<div
+						key={product.id}
+						className='product-card'
+						data-question={`${product.name}: ${product.description}. In stock: ${product.stock} units. Rating: ${product.rating}/5`}>
+						<img src={product.image} alt={product.name} />
+						<h3>{product.name}</h3>
+						<p>${product.price}</p>
+					</div>
+				))}
+			</div>
+		</>
+	);
+}
+```
+
+## Visual Behavior
+
+### Cursor States
+
+The questioning cursor has two visual states:
+
+1. **Searching State**: Continuously rotating reticle when not hovering over a target
+2. **Locked State**: Snaps to nearest 180° and scales slightly when hovering over an element with `data-question`
+
+### Animation Details
+
+* **Rotation Speed**: 3 seconds per full rotation when searching
+* **Lock Animation**: Spring animation with bounce when locking onto target
+* **Debounce**: 200ms delay before releasing lock to prevent flicker
+
+### Theme Integration
+
+The cursor automatically uses Cedar's theme colors:
+
+* Uses `styling.color` from Cedar store for the reticle color
+* Falls back to `#3b82f6` (blue) if no color is set
+* Tooltip background matches the theme color
+
+## Best Practices
+
+### 1. Write Clear Explanations
+
+```tsx
+// ✅ Good: Specific and helpful
+data-question="This button saves your draft and creates a backup. Auto-save happens every 5 minutes."
+
+// ❌ Avoid: Vague or redundant
+data-question="This is a button"
+```
+
+### 2. Keep Tooltips Concise
+
+```tsx
+// ✅ Good: Brief but informative
+data-question="Shows revenue trends for the last 90 days"
+
+// ❌ Avoid: Too lengthy
+data-question="This chart displays the revenue trends for your organization over the last 90 days, including daily, weekly, and monthly breakdowns with comparison to previous periods..."
+```
+
+### 3. Add Context Where Needed
+
+```tsx
+// ✅ Good: Explains non-obvious functionality
+<Icon
+  name="shield"
+  data-question="Protected by 256-bit encryption"
+/>
+
+// ❌ Unnecessary: Obvious elements
+<button data-question="Click to submit">
+  Submit
+</button>
+```
+
+### 4. Use for Progressive Disclosure
+
+```tsx
+// Show basic info in UI, details in question
+<div className='status-badge'>
+	<span>Processing</span>
+	<Icon
+		name='info'
+		data-question="Your request is in the queue. Estimated time: 2-3 minutes. You'll receive an email when complete."
+	/>
+</div>
+```
+
+## Technical Implementation
+
+### How It Works
+
+1. **Activation**: User presses 'Q' (or custom key) to activate
+2. **Event Listening**: Listens to mousemove events when active
+3. **Element Detection**: Uses `Element.closest('[data-question]')` to find attributes
+4. **Tooltip Display**: Shows tooltip with the attribute value
+5. **Cursor Enhancement**: Uses motion-plus-react for smooth cursor animations
+
+### Performance Considerations
+
+* **Event Delegation**: Single mousemove listener for all elements
+* **Debounced Animations**: Prevents excessive re-renders
+* **Conditional Rendering**: Only renders when spell is active
+* **Ref-based State**: Uses refs for animation values to avoid re-renders
+
+## Styling
+
+### Custom Tooltip Styles
+
+While the component provides a default tooltip, you can customize it:
+
+```css
+/* Override default tooltip styles */
+.questioning-tooltip {
+	background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+	backdrop-filter: blur(10px);
+	border: 1px solid rgba(255, 255, 255, 0.2);
+}
+```
+
+### Cursor Customization
+
+The cursor consists of corner brackets that form a reticle:
+
+```tsx
+// Corner dimensions (defined in component)
+const thickness = 2; // Line thickness
+const length = 10; // Line length
+const size = 38; // Overall reticle size
+```
+
+## Accessibility
+
+### Keyboard Navigation
+
+* The spell can be activated via keyboard (default: 'Q')
+* Consider providing alternative ways to access the same information
+
+### Screen Reader Support
+
+For better accessibility, consider also providing the information in screen-reader accessible ways:
+
+```tsx
+<button
+	data-question='Saves your work'
+	aria-label='Save your work'
+	title='Save your work'>
+	Save
+</button>
+```
+
+### Alternative Access
+
+Provide multiple ways to access help information:
+
+```tsx
+function AccessibleHelp() {
+	const [showHelp, setShowHelp] = useState(false);
+
+	return (
+		<>
+			<QuestioningSpell />
+
+			{/* Visual indicator that help is available */}
+			<button onClick={() => setShowHelp(!showHelp)}>Toggle Help Mode</button>
+
+			{/* Alternative help display */}
+			{showHelp && <HelpPanel />}
+		</>
+	);
+}
+```
+
+## Troubleshooting
+
+### Tooltip not appearing
+
+* Verify `data-question` attribute is set correctly
+* Check that the spell is activated (press 'Q')
+* Ensure QuestioningSpell component is mounted
+
+### Cursor not changing
+
+* Check motion-plus-react is installed and configured
+* Verify no CSS conflicts with cursor styles
+* Ensure spell activation is working
+
+### Performance issues
+
+* Reduce the number of elements with `data-question` if excessive
+* Consider lazy-loading content with many questionable elements
+* Check for memory leaks in tooltip content generation
+
+## Related Components
+
+* [RadialMenuSpell](/spells/radial-menu) - Circular menu for actions
+* [TooltipMenuSpell](/spells/tooltip-menu) - Context menu for text selections
+* [Creating Custom Spells](/spells/creating-custom-spells) - Build your own spell components
+
+
+# Radial Menu Spell
+Source: https://docs.cedarcopilot.com/spells/radial-menu
+
+A circular context menu that appears around the cursor for quick actions
+
+# Radial Menu Spell
+
+The `RadialMenuSpell` component creates a beautiful circular menu that appears at the cursor position, perfect for providing quick contextual actions. It features smooth animations, visual feedback, and supports both keyboard and mouse activation.
 
 <img src="https://vrhlhwfhghqbpdpfnpdq.supabase.co/storage/v1/object/public/logos//radialMenu.gif" alt="Radial Menu Demo" />
 
-* Questioning Cursor
-* Tooltip
-* Gestures (coming soon)
+## Features
+
+* **Circular Layout**: Items arranged in a circle for equal access
+* **Visual Feedback**: Animated hover states and selection indicators
+* **Cancel Zone**: Center area for canceling without action
+* **Flexible Activation**: Supports keyboard shortcuts and mouse events
+* **Hold-to-Select**: Natural interaction pattern for quick actions
+* **Escape Support**: Press ESC to cancel without executing
+* **Theme Integration**: Adapts to Cedar's light/dark mode
+* **Icon Support**: Use emojis or Lucide icons for menu items
+
+## Installation
+
+```tsx
+import { RadialMenuSpell } from 'cedar-os-components/spells';
+```
+
+## Basic Usage
+
+```tsx
+import {
+	RadialMenuSpell,
+	type RadialMenuItem,
+} from 'cedar-os-components/spells';
+import { MouseEvent, ActivationMode } from 'cedar-os';
+import { Copy, Trash, Edit, Share } from 'lucide-react';
+
+function MyComponent() {
+	const menuItems: RadialMenuItem[] = [
+		{
+			title: 'Copy',
+			icon: Copy,
+			onInvoke: (store) => {
+				// Access Cedar store for actions
+				console.log('Copy action');
+			},
+		},
+		{
+			title: 'Edit',
+			icon: Edit,
+			onInvoke: (store) => {
+				console.log('Edit action');
+			},
+		},
+		{
+			title: 'Share',
+			icon: Share,
+			onInvoke: (store) => {
+				console.log('Share action');
+			},
+		},
+		{
+			title: 'Delete',
+			icon: Trash,
+			onInvoke: (store) => {
+				console.log('Delete action');
+			},
+		},
+	];
+
+	return (
+		<RadialMenuSpell
+			spellId='my-radial-menu'
+			items={menuItems}
+			activationConditions={{
+				events: [MouseEvent.RIGHT_CLICK],
+				mode: ActivationMode.HOLD,
+			}}
+		/>
+	);
+}
+```
+
+## Props
+
+### RadialMenuSpell Props
+
+| Prop                   | Type                   | Required | Description                               |
+| ---------------------- | ---------------------- | -------- | ----------------------------------------- |
+| `spellId`              | `string`               | Yes      | Unique identifier for this spell instance |
+| `items`                | `RadialMenuItem[]`     | Yes      | Array of menu items to display            |
+| `activationConditions` | `ActivationConditions` | Yes      | Conditions that trigger the menu          |
+
+### RadialMenuItem Interface
+
+```tsx
+interface RadialMenuItem {
+	/** Display title (shown in center on hover) */
+	title: string;
+
+	/** Emoji string or Lucide icon component */
+	icon: string | LucideIcon;
+
+	/** Callback when item is selected */
+	onInvoke: (store: CedarStore) => void;
+}
+```
+
+## Activation Patterns
+
+### Hold Pattern (Recommended)
+
+The most natural interaction for radial menus is the hold pattern:
+
+```tsx
+activationConditions={{
+  events: [MouseEvent.RIGHT_CLICK],
+  mode: ActivationMode.HOLD
+}}
+```
+
+**User flow:**
+
+1. Right-click and hold to open menu
+2. Move mouse to desired item (it highlights)
+3. Release to execute action
+4. Or move to center and release to cancel
+
+### Toggle Pattern
+
+For persistent menus that stay open:
+
+```tsx
+activationConditions={{
+  events: [Hotkey.SPACE],
+  mode: ActivationMode.TOGGLE
+}}
+```
+
+**User flow:**
+
+1. Press Space to open menu
+2. Move mouse to select item
+3. Click to execute or press Space again to close
+
+### Keyboard Shortcut
+
+Bind to any keyboard shortcut:
+
+```tsx
+activationConditions={{
+  events: ['ctrl+e', 'cmd+e'],
+  mode: ActivationMode.HOLD
+}}
+```
+
+## Advanced Examples
+
+### AI Actions Menu
+
+Create an AI-powered context menu:
+
+```tsx
+import { Sparkles, Brain, Wand2, Zap } from 'lucide-react';
+
+const aiMenuItems: RadialMenuItem[] = [
+	{
+		title: 'Explain',
+		icon: Brain,
+		onInvoke: async (store) => {
+			const selection = window.getSelection()?.toString();
+			if (selection) {
+				await store.sendMessage({
+					content: `Explain this: ${selection}`,
+					role: 'user',
+				});
+			}
+		},
+	},
+	{
+		title: 'Improve',
+		icon: Sparkles,
+		onInvoke: async (store) => {
+			const selection = window.getSelection()?.toString();
+			if (selection) {
+				await store.sendMessage({
+					content: `Improve this text: ${selection}`,
+					role: 'user',
+				});
+			}
+		},
+	},
+	{
+		title: 'Summarize',
+		icon: Zap,
+		onInvoke: async (store) => {
+			await store.sendMessage({
+				content: 'Summarize the current conversation',
+				role: 'user',
+			});
+		},
+	},
+	{
+		title: 'Generate',
+		icon: Wand2,
+		onInvoke: (store) => {
+			// Open generation dialog
+			store.setSpellActive('generation-dialog', true);
+		},
+	},
+];
+```
+
+### Emoji-Based Menu
+
+Use emojis for a playful interface:
+
+```tsx
+const emojiMenuItems: RadialMenuItem[] = [
+	{
+		title: 'Love it!',
+		icon: '❤️',
+		onInvoke: (store) => {
+			// Add reaction
+		},
+	},
+	{
+		title: 'Celebrate',
+		icon: '🎉',
+		onInvoke: (store) => {
+			// Trigger celebration
+		},
+	},
+	{
+		title: 'Question',
+		icon: '❓',
+		onInvoke: (store) => {
+			// Ask for clarification
+		},
+	},
+	{
+		title: 'Bookmark',
+		icon: '📌',
+		onInvoke: (store) => {
+			// Save for later
+		},
+	},
+];
+```
+
+### Dynamic Menu Items
+
+Generate menu items based on context:
+
+```tsx
+function ContextualRadialMenu({ selectedElement }) {
+	const menuItems = useMemo(() => {
+		const items: RadialMenuItem[] = [];
+
+		if (selectedElement?.type === 'image') {
+			items.push({
+				title: 'Download',
+				icon: Download,
+				onInvoke: () => downloadImage(selectedElement),
+			});
+			items.push({
+				title: 'Edit',
+				icon: Edit,
+				onInvoke: () => openImageEditor(selectedElement),
+			});
+		}
+
+		if (selectedElement?.type === 'text') {
+			items.push({
+				title: 'Copy',
+				icon: Copy,
+				onInvoke: () => copyToClipboard(selectedElement.content),
+			});
+		}
+
+		// Add common items
+		items.push({
+			title: 'Share',
+			icon: Share,
+			onInvoke: () => shareContent(selectedElement),
+		});
+
+		return items;
+	}, [selectedElement]);
+
+	return (
+		<RadialMenuSpell
+			spellId='contextual-menu'
+			items={menuItems}
+			activationConditions={{
+				events: [MouseEvent.RIGHT_CLICK],
+				mode: ActivationMode.HOLD,
+			}}
+		/>
+	);
+}
+```
+
+## Visual Customization
+
+The radial menu automatically adapts to Cedar's styling system:
+
+### Theme Integration
+
+The component uses Cedar's styling context:
+
+* **Brand Color**: Used for hover states and selection
+* **Dark Mode**: Automatically adjusts colors and contrasts
+* **Text Colors**: Adapts based on theme
+
+### Layout Constants
+
+The component uses these layout constants (defined in the component):
+
+```tsx
+const MENU_RADIUS = 100; // Radius of the menu circle
+const INNER_RADIUS = 50; // Cancel zone radius
+const INNER_GAP = 4; // Gap between zones
+const OUTER_PADDING = 10; // Outer padding
+const BORDER_STROKE_WIDTH = 8; // Ring thickness
+```
+
+## Interaction Details
+
+### Mouse Behavior
+
+* **Hover**: Moving mouse over items highlights them
+* **Center Zone**: Moving to center shows "Cancel"
+* **Selection**: Release (hold mode) or click (toggle mode) to select
+* **Visual Feedback**: Animated ring shows current selection
+
+### Keyboard Support
+
+* **ESC**: Cancel without executing any action
+* **Activation Keys**: Defined by `activationConditions`
+
+### Position Handling
+
+* **Mouse Events**: Menu appears at cursor position
+* **Keyboard Events**: Menu appears at viewport center
+* **Smart Positioning**: Stays within viewport bounds
+
+## Best Practices
+
+### 1. Limit Item Count
+
+Keep menus focused with 3-8 items:
+
+```tsx
+// ✅ Good: Focused set of actions
+const items = [
+	{ title: 'Edit', icon: Edit, onInvoke: handleEdit },
+	{ title: 'Share', icon: Share, onInvoke: handleShare },
+	{ title: 'Delete', icon: Trash, onInvoke: handleDelete },
+];
+
+// ❌ Avoid: Too many items
+const items = [
+	/* 12+ items */
+]; // Hard to navigate quickly
+```
+
+### 2. Use Clear Icons
+
+Choose recognizable icons:
+
+```tsx
+// ✅ Good: Clear, standard icons
+{
+	icon: Copy;
+} // Universal copy icon
+{
+	icon: '📋';
+} // Clear emoji
+
+// ❌ Avoid: Ambiguous icons
+{
+	icon: Circle;
+} // What does this do?
+{
+	icon: '🔮';
+} // Unclear meaning
+```
+
+### 3. Consistent Actions
+
+Keep `onInvoke` callbacks focused:
+
+```tsx
+// ✅ Good: Single responsibility
+onInvoke: (store) => {
+	const data = prepareData();
+	store.sendMessage({ content: data, role: 'user' });
+};
+
+// ❌ Avoid: Multiple unrelated actions
+onInvoke: (store) => {
+	updateUI();
+	saveToDatabase();
+	sendAnalytics();
+	showNotification();
+};
+```
+
+### 4. Handle Errors Gracefully
+
+```tsx
+onInvoke: async (store) => {
+	try {
+		await performAction();
+	} catch (error) {
+		store.addMessage({
+			content: 'Action failed. Please try again.',
+			role: 'system',
+		});
+	}
+};
+```
+
+## Accessibility Considerations
+
+While the radial menu is primarily a visual component, consider these accessibility aspects:
+
+1. **Alternative Activation**: Provide keyboard shortcuts as alternatives
+2. **Clear Labels**: Use descriptive titles for screen readers
+3. **Escape Route**: Always allow ESC key to cancel
+4. **Visual Contrast**: The component respects Cedar's theme for proper contrast
+
+## Performance Notes
+
+* **Singleton Management**: Uses Cedar's spell system for efficient event handling
+* **Animation Performance**: Uses CSS transforms for smooth animations
+* **Memory Efficient**: Automatically cleaned up when component unmounts
+* **Event Delegation**: Single set of listeners for all instances
+
+## Common Patterns
+
+### Tool Selection Menu
+
+```tsx
+const tools = [
+	{ title: 'Select', icon: MousePointer },
+	{ title: 'Draw', icon: Pencil },
+	{ title: 'Erase', icon: Eraser },
+	{ title: 'Text', icon: Type },
+];
+```
+
+### Navigation Menu
+
+```tsx
+const navigation = [
+	{ title: 'Home', icon: Home },
+	{ title: 'Search', icon: Search },
+	{ title: 'Settings', icon: Settings },
+	{ title: 'Profile', icon: User },
+];
+```
+
+### Media Controls
+
+```tsx
+const mediaControls = [
+	{ title: 'Play', icon: Play },
+	{ title: 'Pause', icon: Pause },
+	{ title: 'Next', icon: SkipForward },
+	{ title: 'Previous', icon: SkipBack },
+];
+```
+
+## Troubleshooting
+
+### Menu doesn't appear
+
+* Check that the spell ID is unique
+* Verify activation conditions are correct
+* Ensure component is mounted
+
+### Items not executing
+
+* Verify `onInvoke` callbacks are defined
+* Check for errors in callback functions
+* Ensure Cedar store is accessible
+
+### Visual issues
+
+* Component adapts to Cedar's theme automatically
+* Check that Cedar styling context is provided
+* Verify Container3D component is available
+
+## Related Components
+
+* [TooltipMenuSpell](/spells/tooltip-menu) - Linear menu for text selections
+* [QuestioningSpell](/spells/questioning-spell) - Interactive cursor for exploration
+* [Creating Custom Spells](/spells/creating-custom-spells) - Build your own spell components
+
+
+# Spell Architecture
+Source: https://docs.cedarcopilot.com/spells/spell-architecture
+
+Understanding the technical architecture behind Cedar-OS spells
+
+# Spell Architecture
+
+This guide provides a deep dive into the technical architecture of Cedar-OS's spell system, explaining how spells work under the hood and how the various components interact.
+
+## Architecture Overview
+
+The spell system consists of three main components working in harmony:
+
+```mermaid
+graph TD
+    A[useSpell Hook] --> B[SpellSlice]
+    B --> C[SpellActivationManager]
+    C --> D[DOM Event Listeners]
+    B --> E[Cedar Store]
+
+    style A fill:#e1f5fe
+    style B fill:#fff3e0
+    style C fill:#f3e5f5
+    style D fill:#e8f5e9
+    style E fill:#fce4ec
+```
+
+1. **useSpell Hook** - React interface for components
+2. **SpellSlice** - State management and coordination
+3. **SpellActivationManager** - Event handling and routing
+
+## Component Deep Dive
+
+### 1. SpellActivationManager
+
+The `SpellActivationManager` is a singleton class that manages all low-level event handling for spells. It's the bridge between DOM events and spell activations.
+
+#### Key Responsibilities
+
+* **Centralized Event Listening**: Maintains a single set of event listeners for all spells
+* **Event Routing**: Routes events to the appropriate registered spells
+* **Activation Logic**: Handles different activation modes (toggle, hold, trigger)
+* **Performance Optimization**: Prevents duplicate listeners and manages cleanup
+
+#### How It Works
+
+```tsx
+class SpellActivationManager {
+	// Singleton pattern ensures one instance
+	private static instance: SpellActivationManager;
+
+	// Map of spell IDs to their configurations
+	private registrations = new Map<string, SpellRegistration>();
+
+	// Bound event handlers for proper cleanup
+	private boundHandlers = {
+		keydown: this.handleKeyDown.bind(this),
+		keyup: this.handleKeyUp.bind(this),
+		// ... other handlers
+	};
+}
+```
+
+The manager listens to various DOM events and processes them:
+
+1. **Event Detection**: Captures keyboard, mouse, and selection events
+2. **Spell Matching**: Checks which registered spells should respond
+3. **State Management**: Tracks held keys, cooldowns, and active states
+4. **Callback Execution**: Triggers appropriate spell callbacks
+
+#### Event Processing Flow
+
+```mermaid
+sequenceDiagram
+    participant User
+    participant DOM
+    participant Manager
+    participant Spell
+
+    User->>DOM: Presses key
+    DOM->>Manager: keydown event
+    Manager->>Manager: Check registrations
+    Manager->>Manager: Match conditions
+    Manager->>Spell: onActivate()
+    Manager->>Manager: Update state
+```
+
+### 2. SpellSlice
+
+The `SpellSlice` is a Zustand store slice that provides high-level spell management and integrates with Cedar's state system.
+
+#### Core State Structure
+
+```tsx
+interface SpellSlice {
+	// Map of spell configurations and states
+	spells: Partial<SpellMap>;
+
+	// Registration and management methods
+	registerSpell: (registration: SpellRegistration) => void;
+	unregisterSpell: (spellId: string) => void;
+	activateSpell: (spellId: string, triggerData?: any) => void;
+	deactivateSpell: (spellId: string) => void;
+	toggleSpell: (spellId: string) => void;
+	clearSpells: () => void;
+}
+```
+
+#### Integration Points
+
+The SpellSlice acts as the coordination layer:
+
+1. **Store Integration**: Provides access to Cedar store for spell callbacks
+2. **Lifecycle Management**: Handles spell registration/unregistration
+3. **State Synchronization**: Keeps UI state in sync with activation manager
+4. **Programmatic Control**: Enables manual spell activation/deactivation
+
+#### Registration Flow
+
+When a spell is registered:
+
+```tsx
+registerSpell: (registration) => {
+	// 1. Add to store state
+	set((state) => ({
+		spells: {
+			...state.spells,
+			[id]: { isActive: false, registration },
+		},
+	}));
+
+	// 2. Register with activation manager
+	manager.register(id, conditions, {
+		onActivate: (state) => {
+			// Update store state
+			// Call user callback
+		},
+		onDeactivate: () => {
+			// Update store state
+			// Call user callback
+		},
+	});
+};
+```
+
+### 3. useSpell Hook
+
+The `useSpell` hook provides the React-friendly interface for components to use spells.
+
+#### Hook Lifecycle
+
+```tsx
+function useSpell(options: UseSpellOptions) {
+  // 1. Get store methods
+  const { registerSpell, unregisterSpell, ... } = useSpells();
+
+  // 2. Use refs for callbacks to avoid re-registration
+  const onActivateRef = useRef(options.onActivate);
+  const onDeactivateRef = useRef(options.onDeactivate);
+
+  // 3. Register on mount, re-register on condition changes
+  useEffect(() => {
+    registerSpell({
+      id: options.id,
+      activationConditions: options.activationConditions,
+      onActivate: (state) => onActivateRef.current?.(state),
+      onDeactivate: () => onDeactivateRef.current?.()
+    });
+
+    // 4. Cleanup on unmount
+    return () => {
+      unregisterSpell(options.id);
+    };
+  }, [/* dependencies */]);
+
+  // 5. Return current state and controls
+  return { isActive, activate, deactivate, toggle };
+}
+```
+
+#### Performance Optimizations
+
+* **Ref-based Callbacks**: Prevents unnecessary re-registrations
+* **Dependency Tracking**: Only re-registers when conditions change
+* **Automatic Cleanup**: Ensures no memory leaks
+
+## Activation Modes Explained
+
+### Toggle Mode
+
+```mermaid
+stateDiagram-v2
+    [*] --> Inactive
+    Inactive --> Active: Trigger Event
+    Active --> Inactive: Trigger Event
+```
+
+* User presses key/button → spell activates
+* User presses again → spell deactivates
+* Good for persistent UI elements
+
+### Hold Mode
+
+```mermaid
+stateDiagram-v2
+    [*] --> Inactive
+    Inactive --> Active: Key/Button Down
+    Active --> Inactive: Key/Button Up
+```
+
+* Activates on keydown/mousedown
+* Deactivates on keyup/mouseup
+* Perfect for temporary overlays
+
+### Trigger Mode
+
+```mermaid
+stateDiagram-v2
+    [*] --> Ready
+    Ready --> Activated: Trigger Event
+    Activated --> Cooldown: Auto-deactivate
+    Cooldown --> Ready: Timer expires
+```
+
+* Fires once when triggered
+* Auto-deactivates after brief period
+* Optional cooldown prevents spam
+
+## Event Processing Details
+
+### Keyboard Event Handling
+
+The system handles both single keys and combinations:
+
+```tsx
+private matchesHotkey(event: KeyboardEvent, hotkey: string): boolean {
+  if (hotkey.includes('+')) {
+    // Combination like "ctrl+k"
+    const combo = this.parseHotkeyCombo(hotkey);
+    return event.key === combo.key &&
+           event.ctrlKey === combo.modifiers.ctrl &&
+           event.metaKey === combo.modifiers.meta;
+  } else {
+    // Single key - no unexpected modifiers
+    return event.key.toLowerCase() === hotkey.toLowerCase() &&
+           !event.ctrlKey && !event.metaKey && !event.altKey;
+  }
+}
+```
+
+### Mouse Event Handling
+
+Mouse events include position tracking:
+
+```tsx
+private handleContextMenu(event: MouseEvent): void {
+  for (const registration of this.registrations.values()) {
+    if (mouseEvents.includes(RIGHT_CLICK)) {
+      this.activateSpell(registration, {
+        type: 'mouse',
+        event: RIGHT_CLICK,
+        mousePosition: { x: event.clientX, y: event.clientY },
+        originalEvent: event
+      });
+    }
+  }
+}
+```
+
+### Selection Event Handling
+
+Text selection is debounced for performance:
+
+```tsx
+private handleSelectionChange(): void {
+  // Clear previous timeout
+  if (this.selectionTimeout) {
+    clearTimeout(this.selectionTimeout);
+  }
+
+  // Debounce selection events
+  this.selectionTimeout = setTimeout(() => {
+    const selection = window.getSelection();
+    const selectedText = selection?.toString().trim();
+
+    if (selectedText && selectedText.length > 0) {
+      // Activate selection-based spells
+    }
+  }, 200); // 200ms debounce
+}
+```
+
+## Performance Considerations
+
+### Event Listener Management
+
+The system uses a single set of listeners for all spells:
+
+```tsx
+// ✅ Efficient: One listener for all spells
+window.addEventListener('keydown', this.boundHandlers.keydown);
+
+// ❌ Inefficient: Listener per spell
+spells.forEach((spell) => {
+	window.addEventListener('keydown', spell.handler);
+});
+```
+
+### Memory Management
+
+* **Singleton Pattern**: One manager instance for entire app
+* **Automatic Cleanup**: Listeners removed when no spells registered
+* **Ref-based Callbacks**: Prevents closure memory leaks
+
+### React Integration
+
+The hook optimizes React re-renders:
+
+```tsx
+// Dependencies are stringified for deep comparison
+useEffect(() => {
+  registerSpell({...});
+}, [
+  options.id,
+  JSON.stringify(options.activationConditions), // Deep comparison
+  options.preventDefaultEvents,
+  options.ignoreInputElements
+]);
+```
+
+## Advanced Features
+
+### Input Element Handling
+
+Spells can be configured to ignore input elements:
+
+```tsx
+private isInputElement(target: EventTarget | null): boolean {
+  if (!ignoreInputElements) return false;
+  return target.closest('input, textarea, [contenteditable="true"]') !== null;
+}
+```
+
+### Cooldown System
+
+Prevents rapid re-triggering:
+
+```tsx
+if (mode === ActivationMode.TRIGGER) {
+	const now = Date.now();
+	if (now - registration.lastTriggerTime < cooldown) {
+		return; // Still on cooldown
+	}
+	registration.lastTriggerTime = now;
+}
+```
+
+### Multi-Event Support
+
+Spells can respond to multiple triggers:
+
+```tsx
+activationConditions: {
+	events: [Hotkey.SPACE, MouseEvent.RIGHT_CLICK, 'ctrl+enter'];
+}
+// Any of these will activate the spell
+```
+
+## Data Flow Diagram
+
+```mermaid
+graph LR
+    subgraph "Component Layer"
+        A[React Component]
+        B[useSpell Hook]
+    end
+
+    subgraph "State Layer"
+        C[SpellSlice]
+        D[Cedar Store]
+    end
+
+    subgraph "Event Layer"
+        E[SpellActivationManager]
+        F[DOM Events]
+    end
+
+    A --> B
+    B --> C
+    C --> E
+    E --> F
+    C --> D
+
+    F -.-> E
+    E -.-> C
+    C -.-> B
+    B -.-> A
+
+    style A fill:#e3f2fd
+    style B fill:#e1f5fe
+    style C fill:#fff3e0
+    style D fill:#fce4ec
+    style E fill:#f3e5f5
+    style F fill:#e8f5e9
+```
+
+## Best Practices for Performance
+
+### 1. Use Appropriate Activation Modes
+
+```tsx
+// Hold mode for temporary UI
+mode: ActivationMode.HOLD; // Auto-cleanup on release
+
+// Toggle for persistent features
+mode: ActivationMode.TOGGLE; // User controls lifecycle
+
+// Trigger for one-time actions
+mode: ActivationMode.TRIGGER; // Auto-cleanup after execution
+```
+
+### 2. Optimize Spell IDs
+
+```tsx
+// Use stable IDs to prevent re-registration
+const SPELL_ID = 'my-feature-spell'; // Constant
+
+// Avoid dynamic IDs that change
+const spellId = `spell-${Date.now()}`; // ❌ Changes every render
+```
+
+### 3. Leverage Refs for Callbacks
+
+```tsx
+// The hook already does this, but for custom implementations:
+const callbackRef = useRef(callback);
+useEffect(() => {
+	callbackRef.current = callback;
+}, [callback]);
+```
+
+### 4. Consider Event Delegation
+
+For many similar spells, consider a single parent spell:
+
+```tsx
+// Instead of 100 tooltip spells
+items.map(item => <TooltipSpell key={item.id} />)
+
+// Use one spell with delegation
+<TooltipManagerSpell items={items} />
+```
+
+## Debugging Spells
+
+### Enable Debug Logging
+
+```tsx
+const { isActive } = useSpell({
+	id: 'debug-spell',
+	onActivate: (state) => {
+		console.log('Spell activated:', {
+			triggerData: state.triggerData,
+			timestamp: Date.now(),
+		});
+	},
+});
+```
+
+### Monitor Registration
+
+```tsx
+// Check registered spells in Cedar store
+const { spells } = useCedarStore();
+console.log('Active spells:', Object.keys(spells));
+```
+
+### Track Event Flow
+
+Add logging to understand event propagation:
+
+```tsx
+onActivate: (state) => {
+	console.log('Trigger:', state.triggerData?.event);
+	console.log('Mouse position:', state.triggerData?.mousePosition);
+	console.log('Original event:', state.triggerData?.originalEvent);
+};
+```
+
+## Summary
+
+The spell architecture provides a robust, performant system for gesture-based interactions:
+
+* **Centralized Management**: Single manager handles all events efficiently
+* **React Integration**: Hooks provide clean component interface
+* **State Synchronization**: Zustand slice keeps everything in sync
+* **Performance Optimized**: Singleton pattern, ref-based callbacks, debouncing
+* **Flexible Activation**: Multiple modes and event types supported
+
+This architecture ensures spells are both powerful for developers and performant for users, enabling truly magical interactions in your Cedar-OS applications.
+
+
+# Spells Overview
+Source: https://docs.cedarcopilot.com/spells/spells
+
+Magical interactions for your Cedar-OS applications
+
+# Spells
+
+Spells are Cedar-OS's powerful system for creating contextual, gesture-based interactions that enhance your AI-native applications. They provide a unified way to bind keyboard shortcuts, mouse gestures, and selection events to custom UI behaviors and actions.
+
+## What are Spells?
+
+Spells are reusable interaction patterns that can be activated through various triggers:
+
+* **Keyboard shortcuts** (single keys or combinations like `Ctrl+K`)
+* **Mouse events** (right-click, double-click, modifier+click)
+* **Text selection** (automatically activate when text is selected)
+* **Programmatic activation** (trigger spells from code using `activate()`, `deactivate()`, or `toggle()`)
+
+When activated, spells can display custom UI components, execute actions, or modify application state - all while integrating seamlessly with Cedar's AI capabilities.
+
+<img src="https://vrhlhwfhghqbpdpfnpdq.supabase.co/storage/v1/object/public/logos//radialMenu.gif" alt="Radial Menu Demo" />
+
+## Why Use Spells?
+
+Spells enable you to create sophisticated interactions that feel magical to users:
+
+* **Contextual Actions**: Display radial menus, tooltips, or floating inputs exactly when and where users need them
+* **Rapid Workflows**: Bind complex AI operations to simple gestures
+* **Progressive Disclosure**: Hide advanced features behind intuitive activations
+* **Custom Experiences**: Build unique interaction patterns tailored to your application
+
+## Built-in Spells
+
+Cedar-OS comes with several pre-built spells you can use immediately:
+
+### RadialMenuSpell
+
+A circular menu that appears on activation, perfect for quick actions:
+
+* Activate with right-click or custom hotkey
+* Supports emoji or Lucide icons
+* Execute actions on release (hold mode) or click (toggle mode)
+
+### TooltipMenuSpell
+
+A contextual menu for text selections:
+
+* Automatically appears when text is selected
+* Can spawn floating inputs for AI interactions
+* Perfect for text editing and annotation workflows
+
+### QuestioningSpell
+
+An interactive cursor that reveals hidden information:
+
+* Press 'Q' to activate questioning mode
+* Hover over elements with `data-question` attributes
+* Display contextual tooltips with explanations
+
+## Quick Start
+
+```tsx
+import { useSpell, Hotkey, ActivationMode } from 'cedar-os';
+
+function MyComponent() {
+	const { isActive, activate, deactivate, toggle } = useSpell({
+		id: 'my-spell',
+		activationConditions: {
+			events: [Hotkey.SPACE],
+			mode: ActivationMode.HOLD,
+		},
+		onActivate: () => console.log('Spell activated!'),
+		onDeactivate: () => console.log('Spell deactivated!'),
+	});
+
+	// You can also trigger spells programmatically
+	const handleButtonClick = () => {
+		toggle(); // or activate() / deactivate()
+	};
+
+	return (
+		<>
+			{isActive ? <div>✨ Magic is happening!</div> : null}
+			<button onClick={handleButtonClick}>Toggle Spell</button>
+		</>
+	);
+}
+```
+
+## Learn More
+
+<CardGroup cols={2}>
+  <Card title="Creating Custom Spells" icon="code" href="/spells/creating-custom-spells">
+    Learn how to build your own spells using the useSpell hook and activation
+    conditions
+  </Card>
+
+  <Card title="Spell Architecture" icon="sitemap" href="/spells/spell-architecture">
+    Understand the technical architecture behind the spell system
+  </Card>
+
+  <Card title="Radial Menu Example" icon="circle" href="/spells/radial-menu">
+    Deep dive into the RadialMenuSpell implementation
+  </Card>
+
+  <Card title="Examples & Patterns" icon="sparkles" href="/examples/cedar-playground#spells">
+    See spells in action in the Cedar Playground
+  </Card>
+</CardGroup>
+
+## Key Concepts
+
+### Activation Modes
+
+Spells support three activation modes that determine their lifecycle:
+
+* **Toggle**: Press to activate, press again to deactivate
+* **Hold**: Active while key/button is held down
+* **Trigger**: Fire once with optional cooldown
+
+### Event Types
+
+Spells can respond to multiple event types simultaneously:
+
+* **Keyboard Events**: Single keys or modifier combinations
+* **Mouse Events**: Clicks, right-clicks, double-clicks
+* **Selection Events**: Text selection in the document
+
+### State Management
+
+Spells are fully integrated with Cedar's state management:
+
+* Automatic registration/cleanup with React lifecycle
+* Access to Cedar store for AI operations
+* Synchronization with other Cedar components
+
+## Next Steps
+
+Ready to add some magic to your application? Start by [creating your first custom spell](/spells/creating-custom-spells) or explore the [technical architecture](/spells/spell-architecture) to understand how it all works under the hood.
+
+
+# Tooltip Menu Spell
+Source: https://docs.cedarcopilot.com/spells/tooltip-menu
+
+A contextual menu that appears when text is selected
+
+# Tooltip Menu Spell
+
+The `TooltipMenuSpell` component creates a contextual menu that automatically appears when text is selected, perfect for text editing, AI-powered transformations, and quick actions on selected content. It can also spawn floating input fields for more complex interactions.
+
+## Features
+
+* **Automatic Text Selection Detection**: Appears when text is selected
+* **Smart Positioning**: Positions above selection, adjusts to stay on screen
+* **Floating Input Support**: Can spawn input fields for complex queries
+* **AI Integration**: Direct access to Cedar store for AI operations
+* **Selection Preservation**: Maintains text selection during interactions
+* **Flexible Actions**: Support for immediate actions or input-based workflows
+
+## Installation
+
+```tsx
+import { TooltipMenuSpell } from 'cedar-os-components/spells';
+```
+
+## Basic Usage
+
+```tsx
+import {
+	TooltipMenuSpell,
+	type ExtendedTooltipMenuItem,
+} from 'cedar-os-components/spells';
+import { Copy, Edit, Sparkles } from 'lucide-react';
+
+function MyEditor() {
+	const menuItems: ExtendedTooltipMenuItem[] = [
+		{
+			title: 'Copy',
+			icon: Copy,
+			onInvoke: (store) => {
+				const selection = window.getSelection()?.toString();
+				if (selection) {
+					navigator.clipboard.writeText(selection);
+				}
+			},
+		},
+		{
+			title: 'Improve',
+			icon: Sparkles,
+			onInvoke: async (store) => {
+				const selection = window.getSelection()?.toString();
+				if (selection) {
+					await store.sendMessage({
+						content: `Improve this text: ${selection}`,
+						role: 'user',
+					});
+				}
+			},
+		},
+		{
+			title: 'Ask AI',
+			icon: Edit,
+			spawnsInput: true, // This will open a floating input
+			onInvoke: () => {}, // Not called when spawnsInput is true
+		},
+	];
+
+	return (
+		<>
+			<TooltipMenuSpell spellId='text-menu' items={menuItems} />
+
+			<div className='prose'>
+				<p>Select any text in this paragraph to see the tooltip menu appear.</p>
+				<p>The menu provides quick actions for the selected text.</p>
+			</div>
+		</>
+	);
+}
+```
+
+## Props
+
+### TooltipMenuSpell Props
+
+| Prop                   | Type                        | Required | Default        | Description                                 |
+| ---------------------- | --------------------------- | -------- | -------------- | ------------------------------------------- |
+| `spellId`              | `string`                    | Yes      | -              | Unique identifier for this spell instance   |
+| `items`                | `ExtendedTooltipMenuItem[]` | Yes      | -              | Menu items to display                       |
+| `activationConditions` | `ActivationConditions`      | No       | Text selection | Custom activation conditions                |
+| `stream`               | `boolean`                   | No       | `true`         | Whether to use streaming for floating input |
+
+### ExtendedTooltipMenuItem Interface
+
+```tsx
+interface ExtendedTooltipMenuItem extends TooltipMenuItem {
+	/** Display title */
+	title: string;
+
+	/** Lucide icon component */
+	icon: LucideIcon;
+
+	/** Callback when item is clicked */
+	onInvoke: (store: CedarStore) => void;
+
+	/** If true, spawns floating input instead of immediate action */
+	spawnsInput?: boolean;
+}
+```
+
+## Advanced Examples
+
+### AI Writing Assistant
+
+Create a comprehensive writing assistant:
+
+```tsx
+import { Bold, Italic, Sparkles, Languages, BookOpen, Zap } from 'lucide-react';
+
+const writingAssistantItems: ExtendedTooltipMenuItem[] = [
+	{
+		title: 'Improve',
+		icon: Sparkles,
+		onInvoke: async (store) => {
+			const text = window.getSelection()?.toString();
+			await store.sendMessage({
+				content: `Improve this text while maintaining its meaning: ${text}`,
+				role: 'user',
+			});
+		},
+	},
+	{
+		title: 'Simplify',
+		icon: Zap,
+		onInvoke: async (store) => {
+			const text = window.getSelection()?.toString();
+			await store.sendMessage({
+				content: `Simplify this text for better readability: ${text}`,
+				role: 'user',
+			});
+		},
+	},
+	{
+		title: 'Translate',
+		icon: Languages,
+		spawnsInput: true, // Opens input for target language
+	},
+	{
+		title: 'Expand',
+		icon: BookOpen,
+		onInvoke: async (store) => {
+			const text = window.getSelection()?.toString();
+			await store.sendMessage({
+				content: `Expand on this idea with more detail: ${text}`,
+				role: 'user',
+			});
+		},
+	},
+	{
+		title: 'Make Bold',
+		icon: Bold,
+		onInvoke: () => {
+			document.execCommand('bold', false);
+		},
+	},
+	{
+		title: 'Custom',
+		icon: Edit,
+		spawnsInput: true, // Opens input for custom instructions
+	},
+];
+
+<TooltipMenuSpell spellId='writing-assistant' items={writingAssistantItems} />;
+```
+
+### Code Editor Actions
+
+Add code-specific actions:
+
+```tsx
+import { Code, Bug, Lightbulb, FileText, Copy, Play } from 'lucide-react';
+
+const codeEditorItems: ExtendedTooltipMenuItem[] = [
+	{
+		title: 'Explain',
+		icon: Lightbulb,
+		onInvoke: async (store) => {
+			const code = window.getSelection()?.toString();
+			await store.sendMessage({
+				content: `Explain this code:\n\`\`\`\n${code}\n\`\`\``,
+				role: 'user',
+			});
+		},
+	},
+	{
+		title: 'Find Bugs',
+		icon: Bug,
+		onInvoke: async (store) => {
+			const code = window.getSelection()?.toString();
+			await store.sendMessage({
+				content: `Find potential bugs in this code:\n\`\`\`\n${code}\n\`\`\``,
+				role: 'user',
+			});
+		},
+	},
+	{
+		title: 'Add Comments',
+		icon: FileText,
+		onInvoke: async (store) => {
+			const code = window.getSelection()?.toString();
+			await store.sendMessage({
+				content: `Add helpful comments to this code:\n\`\`\`\n${code}\n\`\`\``,
+				role: 'user',
+			});
+		},
+	},
+	{
+		title: 'Optimize',
+		icon: Zap,
+		onInvoke: async (store) => {
+			const code = window.getSelection()?.toString();
+			await store.sendMessage({
+				content: `Optimize this code for performance:\n\`\`\`\n${code}\n\`\`\``,
+				role: 'user',
+			});
+		},
+	},
+	{
+		title: 'Copy',
+		icon: Copy,
+		onInvoke: () => {
+			const code = window.getSelection()?.toString();
+			if (code) navigator.clipboard.writeText(code);
+		},
+	},
+	{
+		title: 'Run',
+		icon: Play,
+		spawnsInput: true, // Opens input for runtime parameters
+	},
+];
+```
+
+### Research Assistant
+
+Help with research and fact-checking:
+
+```tsx
+import { Search, BookOpen, Quote, Link, CheckCircle } from 'lucide-react';
+
+const researchItems: ExtendedTooltipMenuItem[] = [
+	{
+		title: 'Fact Check',
+		icon: CheckCircle,
+		onInvoke: async (store) => {
+			const claim = window.getSelection()?.toString();
+			await store.sendMessage({
+				content: `Fact-check this claim and provide sources: "${claim}"`,
+				role: 'user',
+			});
+		},
+	},
+	{
+		title: 'Find Sources',
+		icon: Search,
+		onInvoke: async (store) => {
+			const topic = window.getSelection()?.toString();
+			await store.sendMessage({
+				content: `Find reputable sources about: ${topic}`,
+				role: 'user',
+			});
+		},
+	},
+	{
+		title: 'Summarize',
+		icon: BookOpen,
+		onInvoke: async (store) => {
+			const text = window.getSelection()?.toString();
+			await store.sendMessage({
+				content: `Summarize this text in 2-3 sentences: ${text}`,
+				role: 'user',
+			});
+		},
+	},
+	{
+		title: 'Generate Citation',
+		icon: Quote,
+		spawnsInput: true, // Opens input for citation style (APA, MLA, etc.)
+	},
+	{
+		title: 'Related Topics',
+		icon: Link,
+		onInvoke: async (store) => {
+			const topic = window.getSelection()?.toString();
+			await store.sendMessage({
+				content: `What are related topics to explore about: ${topic}`,
+				role: 'user',
+			});
+		},
+	},
+];
+```
+
+### Dynamic Menu Items
+
+Generate menu items based on context:
+
+```tsx
+function ContextualTooltipMenu() {
+	const [documentType, setDocumentType] = useState('general');
+
+	const menuItems = useMemo(() => {
+		const baseItems: ExtendedTooltipMenuItem[] = [
+			{
+				title: 'Copy',
+				icon: Copy,
+				onInvoke: () => {
+					navigator.clipboard.writeText(
+						window.getSelection()?.toString() || ''
+					);
+				},
+			},
+		];
+
+		if (documentType === 'legal') {
+			baseItems.push({
+				title: 'Define Term',
+				icon: Book,
+				onInvoke: async (store) => {
+					const term = window.getSelection()?.toString();
+					await store.sendMessage({
+						content: `Define this legal term: ${term}`,
+						role: 'user',
+					});
+				},
+			});
+		}
+
+		if (documentType === 'technical') {
+			baseItems.push({
+				title: 'Explain Concept',
+				icon: Lightbulb,
+				onInvoke: async (store) => {
+					const concept = window.getSelection()?.toString();
+					await store.sendMessage({
+						content: `Explain this technical concept in simple terms: ${concept}`,
+						role: 'user',
+					});
+				},
+			});
+		}
+
+		return baseItems;
+	}, [documentType]);
+
+	return <TooltipMenuSpell spellId='contextual-menu' items={menuItems} />;
+}
+```
+
+## Floating Input Integration
+
+When an item has `spawnsInput: true`, it opens a floating input field:
+
+### How It Works
+
+1. User selects text
+2. Tooltip menu appears
+3. User clicks item with `spawnsInput: true`
+4. Menu disappears, floating input appears
+5. Selected text is automatically added to input
+6. User can modify or add to the query
+7. On submit, message is sent to Cedar store
+
+### Example with Floating Input
+
+```tsx
+const translationItem: ExtendedTooltipMenuItem = {
+	title: 'Translate',
+	icon: Languages,
+	spawnsInput: true, // This triggers floating input
+	onInvoke: () => {}, // Not called when spawnsInput is true
+};
+
+// When user clicks this item:
+// 1. Floating input appears
+// 2. Selected text is pre-filled
+// 3. User can type: "to Spanish"
+// 4. Full query sent: "[selected text] to Spanish"
+```
+
+## Positioning Behavior
+
+The tooltip menu intelligently positions itself:
+
+1. **Default Position**: Above the selected text, centered
+2. **Edge Detection**: Adjusts if too close to viewport edges
+3. **Padding**: Maintains 10px minimum distance from edges
+4. **Menu Dimensions**: Calculates based on item count (48px per item)
+
+```tsx
+// Position calculation (simplified)
+const rect = selection.getRangeAt(0).getBoundingClientRect();
+const position = {
+	x: rect.left + rect.width / 2, // Center horizontally
+	y: rect.top - 10, // 10px above selection
+};
+```
+
+## Customization
+
+### Custom Activation
+
+While text selection is the default, you can customize activation:
+
+```tsx
+import { MouseEvent, Hotkey } from 'cedar-os';
+
+<TooltipMenuSpell
+	spellId='custom-menu'
+	items={items}
+	activationConditions={{
+		events: [
+			SelectionEvent.TEXT_SELECT,
+			'ctrl+m', // Also activate with Ctrl+M
+		],
+		mode: ActivationMode.TOGGLE,
+	}}
+/>;
+```
+
+### Disable Streaming
+
+For non-AI actions, disable streaming:
+
+```tsx
+<TooltipMenuSpell
+	spellId='quick-actions'
+	items={items}
+	stream={false} // Disable streaming for floating input
+/>
+```
+
+## Best Practices
+
+### 1. Logical Item Order
+
+Arrange items by frequency of use:
+
+```tsx
+// ✅ Good: Common actions first
+const items = [
+  { title: 'Copy', ... },      // Most common
+  { title: 'Improve', ... },    // Frequently used
+  { title: 'Translate', ... },  // Sometimes used
+  { title: 'Custom', ... }      // Advanced option
+];
+```
+
+### 2. Clear Icons
+
+Use recognizable icons that match the action:
+
+```tsx
+// ✅ Good: Clear icon-action relationship
+{ title: 'Copy', icon: Copy }
+{ title: 'Translate', icon: Languages }
+{ title: 'Search', icon: Search }
+
+// ❌ Avoid: Ambiguous icons
+{ title: 'Process', icon: Circle }
+{ title: 'Action', icon: Square }
+```
+
+### 3. Preserve Selection
+
+Don't clear selection unnecessarily:
+
+```tsx
+// ✅ Good: Preserve selection for potential follow-up
+onInvoke: async (store) => {
+  const text = window.getSelection()?.toString();
+  // Don't clear selection here
+  await store.sendMessage({...});
+}
+
+// ❌ Avoid: Clearing selection prematurely
+onInvoke: async (store) => {
+  window.getSelection()?.removeAllRanges(); // Too early!
+  // User might want to perform another action
+}
+```
+
+### 4. Handle Edge Cases
+
+Always check for valid selection:
+
+```tsx
+onInvoke: async (store) => {
+  const selection = window.getSelection()?.toString();
+
+  if (!selection || selection.trim().length === 0) {
+    // Handle empty selection gracefully
+    return;
+  }
+
+  // Process valid selection
+  await store.sendMessage({...});
+}
+```
+
+## Technical Details
+
+### Selection Management
+
+The component maintains selection state using refs:
+
+```tsx
+const selectionRangeRef = useRef<Range | null>(null);
+const selectedTextRef = useRef<string>('');
+
+// Stores selection when menu appears
+selectionRangeRef.current = range.cloneRange();
+selectedTextRef.current = selection.toString();
+```
+
+### Event Handling
+
+* **Text Selection**: Detected via `SelectionEvent.TEXT_SELECT`
+* **Position Calculation**: Based on selection bounding rect
+* **Menu Dismissal**: Click outside or press ESC
+* **Selection Preservation**: Maintained until action completes
+
+### Performance
+
+* **Debounced Selection**: Prevents excessive re-renders
+* **Conditional Rendering**: Only renders when active
+* **Ref-based State**: Avoids unnecessary re-renders
+* **Lazy Input Creation**: Floating input created on demand
+
+## Accessibility
+
+### Keyboard Support
+
+* Text selection via keyboard works normally
+* Menu items should be keyboard navigable
+* ESC key closes menu and floating input
+
+### Screen Reader Considerations
+
+```tsx
+// Provide aria-labels for actions
+const accessibleItems: ExtendedTooltipMenuItem[] = [
+	{
+		title: 'Copy',
+		icon: Copy,
+		onInvoke: () => {
+			// Announce action to screen readers
+			const announcement = document.createElement('div');
+			announcement.setAttribute('role', 'status');
+			announcement.setAttribute('aria-live', 'polite');
+			announcement.textContent = 'Text copied to clipboard';
+			document.body.appendChild(announcement);
+			setTimeout(() => announcement.remove(), 1000);
+
+			navigator.clipboard.writeText(selection);
+		},
+	},
+];
+```
+
+## Troubleshooting
+
+### Menu not appearing
+
+* Verify text selection is working
+* Check that spell ID is unique
+* Ensure component is mounted
+* Verify no CSS `user-select: none` on text
+
+### Position issues
+
+* Check for CSS transforms on parent elements
+* Verify viewport calculations
+* Ensure menu has proper z-index
+
+### Floating input issues
+
+* Verify `spawnsInput` is set correctly
+* Check Cedar store is accessible
+* Ensure `setOverrideInputContent` is available
+
+### Selection lost
+
+* Check for conflicting event handlers
+* Verify `preventDefaultEvents` setting
+* Ensure no other components clear selection
+
+## Related Components
+
+* [RadialMenuSpell](/spells/radial-menu) - Circular menu for general actions
+* [QuestioningSpell](/spells/questioning-spell) - Interactive cursor for exploration
+* [Creating Custom Spells](/spells/creating-custom-spells) - Build your own spell components
 
 
 # Agentic Actions
@@ -6620,6 +9229,8 @@ handleLLMResult: (response: LLMResponse) => {
 };
 ```
 
+> **Note**: This default handling can be customized using [Custom Response Processing](/agent-backend-connection/custom-response-processing#action-type). You can also customize how action completion is displayed with [Custom Message Rendering](/chat/custom-message-rendering#action-type).
+
 ## Structured Response Types
 
 Cedar supports different types of structured responses:
@@ -6640,6 +9251,8 @@ Execute a custom setter on registered state:
 	]
 }
 ```
+
+> **Learn More**: See the complete [Action Response Processing](/agent-backend-connection/custom-response-processing#action-type) documentation and [Action Message Rendering](/chat/custom-message-rendering#action-type) guide for detailed information about customizing action handling and display.
 
 ### Message Type
 
@@ -6814,6 +9427,8 @@ Source: https://docs.cedarcopilot.com/state-access/agentic-state-access
 Cedar allows your agent to understand what is happening in your application, and the ability to change it
 
 In other words, it allows your agent to read and write to the local react state.
+
+To understand how we internally execute and render actions on your state (and how to override default behavior and rendering for state changes), read [Action Response Processing](/agent-backend-connection/custom-response-processing#action-type) and [Action Message Rendering](/chat/custom-message-rendering#action-type).
 
 ## useRegisterState Hook
 
@@ -7047,6 +9662,8 @@ Execute custom setter functions programmatically using the Cedar store:
   ) => void;
   ```
 </CodeGroup>
+
+> **Agent Actions**: Custom setters can be automatically invoked by your agent through structured responses. Learn more about [Action Response Processing](/agent-backend-connection/custom-response-processing#action-type) and [Action Message Rendering](/chat/custom-message-rendering#action-type) to see how agents can execute these setters and display the results.
 
 ## getCedarState
 
