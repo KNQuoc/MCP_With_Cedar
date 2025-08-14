@@ -44,6 +44,7 @@ from .tools.confirm_requirements import ConfirmRequirementsTool
 from .tools.check_install import CheckInstallTool
 from .tools.voice_specialist import VoiceSpecialistTool
 from .tools.spells_specialist import SpellsSpecialistTool
+# Removed ScanCedarComponentsTool - redundant now that we tell AI components are in src/components/cedar-os/
 from .shared import GROUNDING_CONFIG, DEFAULT_INSTALL_COMMAND, INSTALLATION_RULES
 
 
@@ -51,29 +52,51 @@ logger = logging.getLogger(__name__)
 
 
 class CedarModularMCPServer:
-    """MCP Server for Cedar-OS - CRITICAL SETUP RULES:
+    """🎯 CEDAR-OS EXPERT CONSULTANT - Your Intelligent Cedar Implementation Guide
     
-    ⚠️ NEVER USE create-next-app FOR CEDAR PROJECTS!
-    ✅ ALWAYS USE: npx cedar-os-cli plant-seed
+    I am your adaptive Cedar-OS expert with comprehensive knowledge of:
+    • Voice Components & Real-time Audio Processing
+    • Chat Integration & Copilot Configuration  
+    • Spells (AI Actions) & State Management
+    • Mastra Backend & Agent Architecture
+    • Performance Optimization & Best Practices
     
-    The plant-seed command creates EVERYTHING:
-    - Complete Next.js application with TypeScript & Tailwind
-    - Cedar components pre-integrated and working
-    - Mastra backend with AI agents configured
-    - All dependencies and packages installed
-    - Demo UI ready to run immediately
+    ⚠️ CRITICAL RULE: ALWAYS SEARCH DOCUMENTATION BEFORE ANSWERING!
+    • For ANY Cedar/Mastra question, YOU MUST use searchDocs or specialist tools FIRST
+    • NEVER answer from memory - ALWAYS verify with documentation
+    • Base ALL answers on documentation search results
+    • This prevents hallucination and ensures accuracy
     
-    Tools:
-    - checkInstall: MUST BE CALLED FIRST - blocks wrong commands, enforces plant-seed
-    - searchDocs: query Cedar-OS documentation
-    - mastraSpecialist: query Mastra backend documentation  
-    - getRelevantFeature: map user goals to Cedar features
-    - clarifyRequirements: gather implementation requirements
-    - confirmRequirements: validate and plan implementation
-    - voiceSpecialist: specialized Cedar Voice development
-    - spellsSpecialist: specialized Cedar Spells development
+    MY INTELLIGENT APPROACH:
+    1. FIRST: Search documentation for relevant information
+    2. THEN: Provide EXACT citations with line numbers from documentation
+    3. I adapt my recommendations based on your existing codebase
+    4. I offer flexible installation paths with fallback options
+    5. I verify ALL information through documentation search
     
-    ENFORCEMENT: checkInstall tool MUST be called before ANY npm/create command!
+    📊 Smart Installation Strategy:
+    • Empty project → npx cedar-os-cli plant-seed --yes (complete setup)
+    • Existing Next.js/React → npx cedar-os-cli add-sapling --yes (add Cedar)
+    • Last resort → npm install cedar-os (basic integration)
+    
+    CRITICAL KNOWLEDGE:
+    • ALL Cedar components are ALREADY in src/components/cedar-os/
+    • EVERY component you need already exists - just SEARCH for it
+    • chatComponents/ has ALL chat UI (FloatingCedarChat, SidePanelChat, etc.)
+    • inputs/ has ALL input components (TooltipMenu, ChatInput, etc.)
+    • DO NOT create new Cedar components - USE what's already there
+    • "Integrate" = IMPORT and USE existing components from cedar-os folder
+    
+    MY TOOLS (MANDATORY USE FOR ACCURACY):
+    • searchDocs: MUST USE FIRST for ANY Cedar/Mastra question
+    • spellsSpecialist: MUST USE for Spells questions (searches docs automatically)
+    • voiceSpecialist: MUST USE for Voice questions (searches docs automatically)
+    • mastraSpecialist: MUST USE for Mastra questions (searches docs automatically)
+    • checkInstall: Ensures correct Cedar setup
+    
+    🚨 REMINDER: ALWAYS use tools to search documentation BEFORE answering!
+    
+    I am here to ensure your Cedar-OS implementation is perfect. Ask me anything!
     """
 
     def __init__(self, docs_path: Optional[str] = None, mastra_docs_path: Optional[str] = None) -> None:
@@ -118,6 +141,7 @@ class CedarModularMCPServer:
         check_install_tool = CheckInstallTool()
         voice_tool = VoiceSpecialistTool(self.cedar_docs_index)
         spells_tool = SpellsSpecialistTool(self.cedar_docs_index)
+        # Removed scan_components_tool - AI now knows components are in src/components/cedar-os/
 
         self.tool_handlers = {
             search_tool.name: search_tool,
@@ -152,32 +176,28 @@ class CedarModularMCPServer:
         @self.server.call_tool()
         async def handle_call_tool(name: str, arguments: Dict[str, Any]) -> List[types.TextContent]:
             try:
-                # Enforce requirements gate for all tools except clarify/confirm, checkInstall, voiceSpecialist, spellsSpecialist, and the integration wizard/searchDocs/searchMastraDocs
-                allowed_preconfirm = {
-                    "clarifyRequirements",
-                    "confirmRequirements",
-                    "searchDocs",
-                    "mastraSpecialist",  # Always allow Mastra docs search
-                    "checkInstall",  # Always allow install checking
-                    "voiceSpecialist",  # Always allow voice development assistance
-                    "spellsSpecialist",  # Always allow spells development assistance
+                # Track that a documentation search tool has been called
+                doc_search_tools = {
+                    "searchDocs", "mastraSpecialist", "voiceSpecialist", 
+                    "spellsSpecialist"
                 }
-                if name not in allowed_preconfirm and not self._requirements_confirmed:
-                    message = {
-                        "error": "requirements_not_confirmed",
-                        "message": "Please run checkInstall FIRST, then clarifyRequirements and confirmRequirements before using other tools.",
-                        "required": [
-                            "checkInstall(context='starting Cedar integration') - ALWAYS DO THIS FIRST",
-                            "clarifyRequirements(goal, known_constraints?)",
-                            "confirmRequirements({ provider_config, structured_outputs, docs_loaded, ... })",
-                        ],
-                        "grounding": GROUNDING_CONFIG,
-                        "installCommand": DEFAULT_INSTALL_COMMAND,
-                        "installCommandNote": "NEVER use 'npm install' for any Cedar packages. ONLY use the plant-seed CLI commands.",
-                        "errorHandling": "For ANY Cedar-related errors, ALWAYS call searchDocs first to find the solution.",
-                        "criticalRule": "ALWAYS call checkInstall FIRST when starting Cedar work to install the CLI",
-                    }
-                    return [types.TextContent(type="text", text=json.dumps(message))]
+                
+                # Log documentation search for validation
+                if name in doc_search_tools:
+                    logger.info(f"Documentation search performed: {name} with query: {arguments.get('query', '')}")
+                
+                # Soft enforcement - recommend but don't block most tools
+                allowed_without_confirm = {
+                    "clarifyRequirements", "confirmRequirements", "searchDocs", 
+                    "mastraSpecialist", "checkInstall", "voiceSpecialist", 
+                    "spellsSpecialist"
+                }
+                
+                if name not in allowed_without_confirm and not self._requirements_confirmed:
+                    # Soft suggestion instead of hard block
+                    if name == "getRelevantFeature" and not self._requirements_confirmed:
+                        # For feature requests, just add a gentle reminder
+                        pass  # Allow it to proceed with just a note
 
                 handler = self.tool_handlers.get(name)
                 if not handler:
@@ -204,12 +224,15 @@ class CedarModularMCPServer:
 
                 # If tool returns no citations and is docs-related, append a guard note
                 try:
-                    if name in {"searchDocs", "mastraSpecialist", "getRelevantFeature"}:
+                    if name in {"searchDocs", "mastraSpecialist", "getRelevantFeature", "voiceSpecialist", "spellsSpecialist"}:
                         enriched = []
                         for item in result:
                             payload = json.loads(item.text) if item.text else {}
                             if not payload.get("results"):
                                 payload["note"] = payload.get("note") or "not in docs"
+                            # Add reminder to base answers on documentation
+                            if payload.get("results"):
+                                payload["INSTRUCTION"] = "BASE YOUR ANSWER ONLY ON THESE DOCUMENTATION RESULTS"
                             enriched.append(types.TextContent(type="text", text=json.dumps(payload, indent=2)))
                         return enriched
                 except Exception:

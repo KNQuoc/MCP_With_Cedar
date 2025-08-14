@@ -10,18 +10,18 @@ from ..shared import format_tool_output
 
 
 class SpellsSpecialistTool:
-    """Modular spells development assistant that leverages documentation search"""
+    """Cedar Spells Expert - Authoritative guidance on Cedar's interactive AI actions system"""
     
     name = "spellsSpecialist"
     
     # Core spells-related search terms for documentation
     SPELLS_SEARCH_TERMS = {
         "core_concepts": ["spell", "spells", "useSpell", "spell architecture", "spell system", "magic", "interactions"],
-        "components": ["QuestioningSpell", "RadialMenu", "RadialMenuItem", "SpellProvider", "useSpell hook"],
+        "components": ["QuestioningSpell", "RadialMenu", "RadialMenuItem", "TooltipMenuSpell", "SpellProvider", "useSpell hook"],
         "activation": ["activation conditions", "ActivationMode", "Hotkey", "MouseEvent", "SelectionEvent", "gesture", "trigger"],
         "modes": ["TOGGLE", "HOLD", "TRIGGER", "activation mode", "spell lifecycle"],
         "events": ["keyboard events", "mouse events", "text selection", "right click", "hotkeys", "shortcuts"],
-        "features": ["radial menu", "context menu", "command palette", "interactive cursor", "tooltip", "visual feedback"],
+        "features": ["radial menu", "context menu", "command palette", "interactive cursor", "tooltip menu", "questioning cursor", "visual feedback"],
         "lifecycle": ["onActivate", "onDeactivate", "activate", "deactivate", "toggle", "isActive"],
         "integration": ["useCedarStore", "sendMessage", "AI integration", "state access", "Cedar store"]
     }
@@ -43,7 +43,7 @@ class SpellsSpecialistTool:
     def list_tool(self) -> McpTool:
         return McpTool(
             name=self.name,
-            description="REQUIRED for ANY query containing: Spell(s), RadialMenu, useSpell, QuestioningSpell, gesture, activation, hotkey, HOLD, TOGGLE, TRIGGER, onActivate, onDeactivate. DO NOT use searchDocs for these topics",
+            description="[SPELLS EXPERT - MANDATORY] YOU MUST USE THIS TOOL BEFORE ANSWERING ANY SPELLS QUESTIONS! I search Cedar docs for accurate Spells information (AI interactions, radial menus, gestures, hotkeys). ALWAYS call me FIRST for Spells/RadialMenu/useSpell/QuestioningSpell/TooltipMenu/Hotkey/SpellSlice/SpellActivationManager topics to prevent hallucination.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -84,7 +84,7 @@ class SpellsSpecialistTool:
             return [TextContent(type="text", text=json.dumps({"error": f"Unknown action: {action}"}))]
     
     async def _search_spells_documentation(self, query: str, focus: str) -> List[TextContent]:
-        """Search documentation with spells-specific context"""
+        """MANDATORY: Search documentation with spells-specific context - MUST be called before answering"""
         
         # Build enhanced search query based on focus area
         search_terms = self._build_search_query(query, focus)
@@ -102,6 +102,7 @@ class SpellsSpecialistTool:
             "focus": focus,
             "search_terms_used": search_terms,
             "results": spells_results,
+            "IMPORTANT": "BASE YOUR ANSWER ONLY ON THESE DOCUMENTATION RESULTS - DO NOT HALLUCINATE",
             "guidance": self._get_contextual_guidance(query, focus),
             "related_topics": self._suggest_related_topics(query, focus),
             "next_steps": self._suggest_next_steps(spells_results, focus),
@@ -118,21 +119,16 @@ class SpellsSpecialistTool:
         search_query = f"{query} spell implementation example code useSpell hook activation"
         docs_results = await self.docs_index.search(search_query, limit=5, use_semantic=True)
         
-        # Build implementation guidance
+        # Return documentation with code examples
         full_payload = {
             "action": "guide",
             "topic": query,
             "focus": focus,
-            "overview": self._get_implementation_overview(query, focus),
             "documentation": docs_results,
-            "key_concepts": self._identify_key_concepts(query, focus),
-            "search_suggestions": self._get_search_suggestions(query, focus),
-            "common_patterns": self._suggest_common_patterns(focus),
-            "implementation_steps": self._create_implementation_steps(query, focus),
             "code_examples": self._extract_code_from_results(docs_results)
         }
         
-        formatted = format_tool_output(full_payload, keep_fields=["documentation", "implementation_steps", "code_examples"])
+        formatted = format_tool_output(full_payload, keep_fields=["documentation", "code_examples"])
         return [TextContent(type="text", text=json.dumps(formatted, indent=2))]
     
     async def _help_troubleshoot(self, query: str, focus: str) -> List[TextContent]:
@@ -230,8 +226,12 @@ class SpellsSpecialistTool:
         """Provide contextual guidance based on query and focus"""
         query_lower = query.lower()
         
-        if "radial" in query_lower or "menu" in query_lower:
+        if "radial" in query_lower or ("menu" in query_lower and "tooltip" not in query_lower):
             return "RadialMenu creates circular menus activated by gestures. Use useSpell hook with HOLD mode for best UX. Components auto-position to stay on screen."
+        elif "questioning" in query_lower or "question" in query_lower or "data-question" in query_lower:
+            return "QuestioningSpell transforms cursor into interactive exploration tool. Press 'Q' to activate, hover over elements with data-question attributes to reveal hidden information. Perfect for educational interfaces and contextual help."
+        elif "tooltip" in query_lower or "text selection" in query_lower or "selected text" in query_lower:
+            return "TooltipMenuSpell creates contextual menu that appears when text is selected. Supports immediate actions or spawning floating inputs for AI interactions. Perfect for text editing and annotation workflows."
         elif "activation" in query_lower or "trigger" in query_lower:
             return "Spells support keyboard (Hotkey), mouse (MouseEvent), and selection (SelectionEvent) triggers. Use ActivationMode to control lifecycle: TOGGLE, HOLD, or TRIGGER."
         elif "custom" in query_lower or "create" in query_lower:
@@ -239,11 +239,11 @@ class SpellsSpecialistTool:
         elif "not working" in query_lower or "error" in query_lower:
             return "Check spell ID uniqueness, verify activation conditions syntax, ensure preventDefaultEvents for browser shortcuts, and check ignoreInputElements setting."
         elif focus == "components":
-            return "Cedar provides QuestioningSpell for interactive tooltips and RadialMenu for gesture-based menus. Both use useSpell hook internally."
+            return "Cedar provides QuestioningSpell for interactive tooltips, RadialMenu for gesture-based menus, and TooltipMenuSpell for text selection actions. All use useSpell hook internally."
         elif focus == "lifecycle":
             return "Spells have three states: inactive, activating, and active. Use onActivate/onDeactivate callbacks and isActive state for UI updates."
         else:
-            return "Cedar spells enable gesture-based interactions, radial menus, and keyboard shortcuts. Use useSpell hook to create custom magical interactions."
+            return "Cedar spells enable gesture-based interactions, radial menus, questioning cursors, and text selection menus. Use useSpell hook to create custom magical interactions."
     
     def _suggest_related_topics(self, query: str, focus: str) -> List[str]:
         """Suggest related topics to explore"""
@@ -265,10 +265,16 @@ class SpellsSpecialistTool:
         query_lower = query.lower()
         if "radial" in query_lower:
             suggestions.append("RadialMenuItem configuration")
+        if "questioning" in query_lower or "question" in query_lower:
+            suggestions.append("data-question attribute usage")
+        if "tooltip" in query_lower:
+            suggestions.append("ExtendedTooltipMenuItem interface")
         if "keyboard" in query_lower or "hotkey" in query_lower:
             suggestions.append("Keyboard event handling")
         if "mouse" in query_lower:
             suggestions.append("Mouse gesture support")
+        if "text" in query_lower and "selection" in query_lower:
+            suggestions.append("TooltipMenuSpell configuration")
             
         return suggestions[:5]
     
@@ -350,10 +356,10 @@ class SpellsSpecialistTool:
         overviews = {
             "creating": "Create spells with useSpell hook. Define unique ID, activation conditions (events + mode), and lifecycle callbacks. Hook returns isActive state and control methods.",
             "activation": "Activation uses events (keyboard, mouse, selection) and modes (TOGGLE, HOLD, TRIGGER). Support multiple triggers and combine modifiers for complex gestures.",
-            "components": "Pre-built spell components include QuestioningSpell (interactive tooltips) and RadialMenu (circular menus). Both handle activation internally.",
+            "components": "Pre-built spell components include QuestioningSpell (interactive exploration cursor), RadialMenu (circular gesture menus), and TooltipMenuSpell (text selection context menu). All handle activation internally.",
             "lifecycle": "Spells have onActivate and onDeactivate callbacks. Access trigger data in onActivate. Use isActive state for conditional rendering.",
-            "patterns": "Common patterns: command palettes (TOGGLE mode), context menus (right-click), tooltips (hover/HOLD), and AI assistants (text selection).",
-            "general": "Cedar spells enable magical interactions through gestures, shortcuts, and visual feedback. Built on useSpell hook with pre-built components."
+            "patterns": "Common patterns: command palettes (TOGGLE mode), context menus (right-click), interactive tooltips (QuestioningSpell), text selection actions (TooltipMenuSpell), and AI assistants.",
+            "general": "Cedar spells enable magical interactions through gestures, shortcuts, and visual feedback. Built on useSpell hook with pre-built components for radial menus, questioning cursors, and text selection menus."
         }
         return overviews.get(focus, overviews["general"])
     
@@ -361,11 +367,11 @@ class SpellsSpecialistTool:
         """Identify key concepts to understand"""
         concepts = {
             "creating": ["useSpell hook", "Spell ID uniqueness", "Activation conditions", "Lifecycle callbacks", "State management"],
-            "activation": ["Event types", "Activation modes", "Keyboard modifiers", "Mouse events", "Prevent defaults"],
-            "components": ["RadialMenu", "QuestioningSpell", "Data attributes", "Component props", "Visual feedback"],
+            "activation": ["Event types", "Activation modes", "Keyboard modifiers", "Mouse events", "Text selection", "Prevent defaults"],
+            "components": ["RadialMenu", "QuestioningSpell", "TooltipMenuSpell", "Data attributes", "ExtendedTooltipMenuItem", "Component props", "Visual feedback"],
             "lifecycle": ["onActivate callback", "onDeactivate callback", "Trigger data", "isActive state", "Programmatic control"],
-            "patterns": ["Command palettes", "Context menus", "Gesture recognition", "Keyboard shortcuts", "AI integration"],
-            "general": ["Spell architecture", "useSpell hook", "Activation system", "Pre-built components"]
+            "patterns": ["Command palettes", "Context menus", "Questioning cursor", "Text selection menus", "Gesture recognition", "Keyboard shortcuts", "AI integration"],
+            "general": ["Spell architecture", "useSpell hook", "Activation system", "Pre-built components", "RadialMenu", "QuestioningSpell", "TooltipMenuSpell"]
         }
         return concepts.get(focus, concepts["general"])
     
@@ -394,17 +400,20 @@ class SpellsSpecialistTool:
                 "Command palette with search",
                 "Context menu on right-click",
                 "Keyboard shortcut handler",
-                "AI assistant on text selection"
+                "AI assistant on text selection",
+                "Interactive help with QuestioningSpell"
             ],
             "activation": [
                 "Multi-key combinations",
                 "Hold-to-activate menus",
                 "Toggle overlays",
-                "Trigger with cooldown"
+                "Trigger with cooldown",
+                "Text selection detection"
             ],
             "components": [
                 "RadialMenu with dynamic items",
                 "QuestioningSpell for help system",
+                "TooltipMenuSpell for text editing",
                 "Custom spell components",
                 "Nested spell activation"
             ],
@@ -417,6 +426,8 @@ class SpellsSpecialistTool:
             "general": [
                 "Basic spell setup",
                 "Radial menu integration",
+                "Questioning cursor for exploration",
+                "Text selection menu actions",
                 "Keyboard shortcut system",
                 "Interactive tooltips"
             ]
@@ -577,10 +588,10 @@ class SpellsSpecialistTool:
     def _get_spell_types(self) -> Dict[str, List[str]]:
         """Get spell type categories"""
         return {
-            "UI Spells": ["RadialMenu", "QuestioningSpell", "Command Palette"],
-            "Gesture Spells": ["Mouse gestures", "Keyboard shortcuts", "Touch gestures"],
-            "Context Spells": ["Right-click menus", "Selection actions", "Hover tooltips"],
-            "AI Spells": ["AI assistant triggers", "Voice commands", "Smart suggestions"]
+            "UI Spells": ["RadialMenu", "QuestioningSpell", "TooltipMenuSpell", "Command Palette"],
+            "Gesture Spells": ["Mouse gestures", "Keyboard shortcuts", "Touch gestures", "Hold interactions"],
+            "Context Spells": ["Right-click menus", "Text selection actions", "Hover tooltips", "data-question exploration"],
+            "AI Spells": ["AI assistant triggers", "Voice commands", "Smart suggestions", "Text transformations"]
         }
     
     def _get_activation_methods(self) -> List[str]:
@@ -601,20 +612,25 @@ class SpellsSpecialistTool:
                 "Command palette for quick actions",
                 "Context menu for selected text",
                 "Keyboard navigation system",
-                "Quick AI assistant trigger"
+                "Quick AI assistant trigger",
+                "Educational interfaces with QuestioningSpell"
             ],
             "components": [
                 "Help system with QuestioningSpell",
                 "Tool palette with RadialMenu",
+                "Text editor with TooltipMenuSpell",
                 "Settings menu with gestures",
-                "Quick actions wheel"
+                "Quick actions wheel",
+                "Interactive documentation explorer"
             ],
             "general": [
                 "Enhanced user interactions",
                 "Accessibility shortcuts",
                 "Power user features",
-                "AI-powered assistance",
-                "Visual feedback systems"
+                "AI-powered text assistance",
+                "Educational tooltips",
+                "Visual feedback systems",
+                "Context-aware menus"
             ]
         }
         return use_cases.get(focus, use_cases["general"])
@@ -630,14 +646,15 @@ class SpellsSpecialistTool:
                 "Build complex interactions"
             ],
             "components": [
-                "Try QuestioningSpell",
-                "Implement RadialMenu",
+                "Try QuestioningSpell for exploration",
+                "Implement RadialMenu for gestures",
+                "Add TooltipMenuSpell for text selection",
                 "Customize components",
                 "Create custom spell components"
             ],
             "general": [
                 "Learn spell concepts",
-                "Try pre-built components",
+                "Try pre-built components (RadialMenu, QuestioningSpell, TooltipMenuSpell)",
                 "Create custom spell",
                 "Add activation conditions",
                 "Build advanced interactions"
