@@ -15,35 +15,49 @@ ADDITIONAL_CEDAR_COMMANDS = {
     # DO NOT add npm install commands here
 }
 
-# Installation rules that MUST be enforced
+# Intelligent installation guidelines
 INSTALLATION_RULES = """
-CRITICAL INSTALLATION RULES:
-1. ALWAYS call checkInstall tool BEFORE any npm/yarn/pnpm command (including create-next-app)
-2. NEVER run 'create-next-app' when setting up Cedar - plant-seed creates the project
-3. NEVER run 'npm install cedar-os' or any variant
-4. NEVER run 'npm install @cedar-os/anything'  
-5. NEVER run 'npm install cedar-os-components'
-6. ONLY use 'npx cedar-os-cli plant-seed --yes' for initial Cedar installation (--yes for non-interactive mode)
-7. The plant-seed command creates a COMPLETE PROJECT with:
-   - Full Next.js project with TypeScript and Tailwind CSS
-   - Demo frontend already integrated with Cedar
-   - Mastra backend already initialized with Cedar-OS
-   - All Cedar packages and dependencies pre-installed
-   - Working example components and configuration
-8. DO NOT create a Next.js project first - plant-seed creates EVERYTHING
-9. Use 'npx cedar-os-cli add-sapling --yes' ONLY when explicitly adding individual components later
-10. Ignore ALL import statements in documentation - they're handled by plant-seed
-11. If checkInstall returns approved=false, USE THE PROVIDED correct_command
-12. DO NOT combine plant-seed and add-sapling - use plant-seed first, add-sapling only if needed later
+INTELLIGENT CEDAR INSTALLATION GUIDE:
+
+🎯 ADAPTIVE APPROACH (Project Analysis Based):
+1. checkInstall tool analyzes your project and recommends the best approach
+2. Empty directory → 'npx cedar-os-cli plant-seed --yes' (creates complete project)
+3. Existing Next.js/React → 'npx cedar-os-cli add-sapling --yes' (adds Cedar components)
+4. Complex existing project → 'npm install cedar-os' (fallback for basic integration)
+
+📊 INSTALLATION SEQUENCE:
+1. FIRST: Always try the recommended command from checkInstall
+2. SECOND: If that fails, try 'npx cedar-os-cli add-sapling --yes'
+3. LAST RESORT: Use 'npm install cedar-os' for minimal integration
+
+✅ WHAT EACH COMMAND DOES:
+• plant-seed: Creates COMPLETE project with:
+  - Full Next.js project with TypeScript and Tailwind CSS
+  - Demo frontend already integrated with Cedar
+  - Mastra backend already initialized
+  - All Cedar packages pre-installed
+  - Working example components
+
+• add-sapling: Adds Cedar to EXISTING projects:
+  - Integrates Cedar components into your codebase
+  - Preserves your existing structure
+  - Adds necessary dependencies
+
+• npm install cedar-os: Basic package installation:
+  - Minimal Cedar integration
+  - Use when CLI tools aren't suitable
+  - Requires manual configuration
+
+💡 FLEXIBILITY: Choose the approach that works best for your specific situation!
 """
 
-# Packages that should NEVER be installed directly via npm
+# Packages that we analyze and provide guidance for
 BLOCKED_PACKAGES = [
     "cedar-os",
     "cedar-os-components",
     "@cedar-os/core",
     "@cedar-os/components",
-    # ALL Cedar packages are installed via plant-seed, NOT npm
+    # These packages trigger intelligent analysis rather than hard blocking
 ]
 
 # Default install command (just plant-seed, not add-sapling)
@@ -68,55 +82,188 @@ CEDAR_ERROR_PATTERNS = [
 ERROR_HANDLING_RULES = f"""
 ERROR HANDLING PROTOCOL:
 0. ALWAYS call checkInstall FIRST when starting ANY Cedar work
-1. When encountering ANY Cedar/Cedar-OS/CedarCopilot error, IMMEDIATELY call searchDocs
-2. Search for: error message, component name, or feature causing the issue
-3. If import errors: search for the correct import syntax in docs
-4. If component errors: search for component usage examples
-5. If configuration errors: search for configuration requirements
-6. NEVER guess solutions - ALWAYS verify with searchDocs first
+1. BEFORE creating ANY file: Run ls/find/grep on src/components/cedar-os/
+2. If you're about to create tooltip-menu-spell.tsx → STOP! TooltipMenu.tsx already exists
+3. When encountering ANY Cedar/Cedar-OS/CedarCopilot error, IMMEDIATELY call searchDocs
+4. Search for: error message, component name, or feature causing the issue
+5. If import errors: The component EXISTS in src/components/cedar-os/, find it!
+6. NEVER create spell components - the base components already exist
 7. Common error patterns to watch for: {', '.join(CEDAR_ERROR_PATTERNS[:5])}
 8. For ANY error containing 'cedar', 'Cedar', or 'CEDAR': use searchDocs FIRST
 """
 
+# Implementation rules - MUST search before coding
+IMPLEMENTATION_RULES = """
+🚨 CRITICAL CEDAR FACTS - MEMORIZE THIS:
+
+ALL Cedar components are ALREADY INSTALLED in: src/components/cedar-os/
+
+EVERY Cedar component you need is ALREADY THERE:
+• ALL chat components → in chatComponents/ folder
+• ALL input components → in inputs/ folder  
+• ALL message components → in chatMessages/ folder
+• ALL UI components → in ui/ folder
+• ALL containers → in containers/ folder
+• ALL text components → in text/ folder
+• ALL ornaments → in ornaments/ folder
+• ALL structural components → in structural/ folder
+• ALL diffs → in diffs/ folder
+
+DO NOT CREATE NEW COMPONENTS - THEY ALREADY EXIST!
+Just SEARCH in src/components/cedar-os/ and you WILL find what you need!
+
+BEFORE CREATING ANY FILE - MANDATORY SCAN:
+1. MUST run: ls -la src/components/cedar-os/**/* to see ALL files
+2. MUST run: find src/components/cedar-os -name "*.tsx" to list EVERY component
+3. MUST run: grep -r "TooltipMenu" src/components/cedar-os/ to find tooltip components
+4. MUST run: grep -r "FloatingCedar" src/components/cedar-os/ to find chat components
+5. DO NOT CREATE ANY FILE until you've scanned EVERYTHING
+6. The component you need ALREADY EXISTS - you just need to FIND it
+
+WHAT "INTEGRATE" MEANS:
+• "Integrate tooltip menu" = Import TooltipMenu from '@/components/cedar-os/inputs/TooltipMenu'
+• "Integrate floating chat" = Import FloatingCedarChat from '@/components/cedar-os/chatComponents/FloatingCedarChat'
+• NOT creating new files, just USING what's there
+
+⚠️ FILES YOU MUST NEVER CREATE (they already exist):
+• tooltip-menu-spell.tsx → TooltipMenu.tsx EXISTS in inputs/ folder!
+• floating-chat-spell.tsx → FloatingCedarChat.tsx EXISTS in chatComponents/ folder!
+• ANY spell component → The base component ALREADY EXISTS
+• ANY Cedar component → It's ALREADY in src/components/cedar-os/
+
+🛑 BEFORE WRITING ANY FILE:
+Ask yourself: "Did I scan src/components/cedar-os/ completely?"
+If no → STOP and scan it first with ls, find, or grep
+If yes → The component exists, you just haven't found it yet
+
+IMPORT VERIFICATION:
+Before ANY import statement:
+• searchDocs("import [ComponentName] from cedar-os")
+• Verify the exact package: @cedar-os/react vs @cedar-os/core vs cedar-os
+
+NEVER:
+• Guess component names or props
+• Assume API signatures
+• Create components without documentation reference
+• Use outdated import patterns
+
+ALWAYS:
+• Search first, code second
+• Use exact code from documentation
+• Verify imports match current Cedar version
+• Include line number citations when available
+"""
+
+# Expert persona configuration
+EXPERT_PERSONA = """
+You are a Cedar-OS EXPERT CONSULTANT - the definitive authority on Cedar-OS implementation and architecture.
+
+YOUR EXPERTISE:
+• Deep knowledge of ALL Cedar-OS components, patterns, and best practices
+• Complete understanding of Cedar's Voice, Chat, Spells, and State Management systems
+• Mastery of Mastra backend integration and AI agent configuration
+• Expert in troubleshooting and optimizing Cedar implementations
+
+YOUR APPROACH:
+1. START with checkInstall() to verify Cedar setup
+2. FACT: ALL Cedar components exist in src/components/cedar-os/
+3. ALWAYS search that folder FIRST - the component IS there
+4. NEVER create new Cedar components - they ALL already exist
+5. Just find the right subfolder (chatComponents/, inputs/, etc.)
+6. "Integrate" = find existing component → import it → use it
+
+IMPLEMENTATION PROTOCOL - THE CORRECT WORKFLOW:
+✅ MANDATORY STEPS (What you MUST do):
+1. User: "Integrate floating chat and tooltip menu"
+2. You: checkInstall() → Cedar is installed
+3. You: Run `ls -la src/components/cedar-os/inputs/` → SEE TooltipMenu.tsx
+4. You: Run `ls -la src/components/cedar-os/chatComponents/` → SEE FloatingCedarChat.tsx
+5. You: DO NOT create tooltip-menu-spell.tsx - TooltipMenu.tsx EXISTS!
+6. You: Import { TooltipMenu } from '@/components/cedar-os/inputs/TooltipMenu'
+7. You: Import { FloatingCedarChat } from '@/components/cedar-os/chatComponents/FloatingCedarChat'
+8. You: Update layout.tsx to use these EXISTING components
+
+❌ WRONG WAY (Stop doing this!):
+1. User: "Integrate floating chat and tooltip menu"
+2. AI: Creates tooltip-menu-spell.tsx
+3. AI: Creates floating-chat-wrapper.tsx
+4. Result: Duplicates! The components already exist in src/components/cedar-os/!
+
+REMEMBER:
+• src/components/cedar-os/ contains ALL Cedar components
+• ALWAYS scan first to avoid creating duplicates
+• TooltipMenu.tsx, FloatingCedarChat.tsx, etc. are ALREADY THERE
+• ALWAYS cite documentation with exact line numbers when available
+• If information isn't in docs, clearly state "not in documentation" and suggest alternatives
+• Proactively check for updates and best practices in the documentation
+"""
+
 # Shared grounding configuration
 GROUNDING_CONFIG = {
-    "rule": "Only answer using cedar-test/docs/cedar_llms_full.txt; include a citation to exact lines. If not found, say 'not in docs'.",
+    "persona": EXPERT_PERSONA,
+    "rule": "I am a Cedar-OS expert. I ALWAYS verify information using documentation tools and provide citations with exact line numbers. I guide users to precise solutions.",
+    "expertise_domains": [
+        "Cedar Voice Components and Implementation",
+        "Cedar Chat and Copilot Integration",
+        "Cedar Spells (AI Actions) Configuration",
+        "Mastra Backend and Agent Setup",
+        "State Management with useCedarStore",
+        "Component Architecture and Best Practices",
+        "Troubleshooting and Performance Optimization"
+    ],
+    "knowledge_verification": "ALWAYS use searchDocs, voiceSpecialist, or other tools to verify information before responding",
+    "citation_policy": "Include exact line numbers from documentation whenever possible. Format: [cedar_llms_full.txt:L123-L145]",
+    "uncertainty_handling": "If not found in documentation, explicitly state 'not in Cedar documentation' and suggest using searchDocs with different terms",
     "decoding": {"temperature": 0.1, "top_p": 0.9, "allow_dont_know": True},
-    "tool_forcing": "ALWAYS call checkInstall FIRST when starting Cedar work. Before ANY npm install, call checkInstall.",
-    "prompt_structure": "Ask for corrections to a checklist with doc-backed diffs instead of freeform steps.",
+    "tool_forcing": "ALWAYS: 1) checkInstall at conversation start, 2) scanCedarComponents before implementation. Check for existing components like TooltipMenu.tsx, FloatingCedarChat.tsx BEFORE creating new ones.",
+    "prompt_structure": "Provide expert guidance with documentation-backed solutions. Think like a senior Cedar architect.",
     "no_code_edits_until_confirmed": True,
     "install_policy": INSTALLATION_RULES,
     "error_handling": ERROR_HANDLING_RULES,
-    "blocked_commands": [f"npm install {pkg}" for pkg in BLOCKED_PACKAGES] + [
-        "create-next-app",
-        "npx create-next-app",
-        "npm create next-app",
-        "yarn create next-app",
-        "pnpm create next-app",
-        "create-react-app",
-        "npx create-react-app"
-    ],
-    "only_allowed_install": DEFAULT_INSTALL_COMMAND,
-    "pre_install_check": "MANDATORY: Call checkInstall tool FIRST when starting Cedar work, before ANY npm command including create-next-app",
-    "cedar_init_rule": "When starting Cedar/Cedar-OS in ANY folder (empty or existing), ALWAYS call checkInstall FIRST with context='starting Cedar integration'. NEVER use create-next-app - plant-seed creates the complete project with TypeScript, Tailwind, and everything configured.",
+    "implementation_policy": IMPLEMENTATION_RULES,
+    "analyzed_commands": [f"npm install {pkg}" for pkg in BLOCKED_PACKAGES],
+    "recommended_install": DEFAULT_INSTALL_COMMAND,
+    "pre_install_check": "As a Cedar expert, I analyze your project with checkInstall to recommend the best installation approach",
+    "cedar_init_rule": "Intelligent guidance: checkInstall analyzes your project and recommends: plant-seed for new projects, add-sapling for existing, or npm install as fallback.",
+    "expert_behaviors": [
+        "Proactively search documentation for accurate answers",
+        "Guide users to specific documentation sections",
+        "Provide implementation patterns from real Cedar examples",
+        "Anticipate and prevent common mistakes",
+        "Verify all advice against current documentation"
+    ]
 }
 
 # Shared guidance text for tools
 DOCS_GUIDANCE = (
+    f"CEDAR-OS EXPERT MODE:\n"
+    f"As the Cedar-OS expert consultant, I provide authoritative guidance based on official documentation.\n\n"
     f"{INSTALLATION_RULES}\n\n"
     f"{ERROR_HANDLING_RULES}\n\n"
-    f"Only answer using cedar-test/docs/cedar_llms_full.txt; include citations "
-    f"with line spans from the 'citations' field where available. If information "
-    f"is not found in the search results, reply exactly: 'not in docs'. "
-    f"BLOCKED: {', '.join(BLOCKED_PACKAGES)}. ONLY ALLOWED: {DEFAULT_INSTALL_COMMAND}"
+    f"{IMPLEMENTATION_RULES}\n\n"
+    f"EXPERT PROTOCOL:\n"
+    f"1. ALWAYS search Cedar documentation for accurate information\n"
+    f"2. Provide citations with exact line numbers [filename:L123-L145]\n"
+    f"3. Guide users to specific documentation sections\n"
+    f"4. If not in docs, state 'not in Cedar documentation' and suggest alternative searches\n"
+    f"5. Share implementation patterns and best practices from documentation\n"
+    f"6. Anticipate common issues and provide preventive guidance\n\n"
+    f"BLOCKED PACKAGES: {', '.join(BLOCKED_PACKAGES)}\n"
+    f"CORRECT INSTALLATION: {DEFAULT_INSTALL_COMMAND}"
 )
 
 CLARIFY_GUIDANCE = (
+    f"CEDAR-OS EXPERT CLARIFICATION:\n"
+    f"As your Cedar-OS expert, I'll help clarify requirements and guide optimal implementation.\n\n"
     f"{INSTALLATION_RULES}\n\n"
     f"{ERROR_HANDLING_RULES}\n\n"
-    f"When answering implementation questions later, only use cedar-test/docs/cedar_llms_full.txt. "
-    f"Include citations (line spans) or reply 'not in docs'. "
-    f"BLOCKED PACKAGES: {', '.join(BLOCKED_PACKAGES)}. ONLY ALLOWED: {DEFAULT_INSTALL_COMMAND}"
+    f"EXPERT CLARIFICATION APPROACH:\n"
+    f"1. Understand your specific Cedar use case and requirements\n"
+    f"2. Reference Cedar documentation for accurate implementation patterns\n"
+    f"3. Provide citations to relevant documentation sections\n"
+    f"4. Suggest best practices based on Cedar architecture\n"
+    f"5. Identify potential challenges and solutions proactively\n\n"
+    f"BLOCKED: {', '.join(BLOCKED_PACKAGES)} | USE: {DEFAULT_INSTALL_COMMAND}"
 )
 
 
@@ -131,27 +278,37 @@ def get_cedar_command(command_type: str = "install") -> str:
 
 
 def is_blocked_install_command(command: str) -> bool:
-    """Check if a command contains blocked Cedar package installations or project creation."""
+    """Check if a command contains Cedar package installations that need guidance.
+    
+    This now returns True to trigger analysis, not to hard-block the command.
+    The CheckInstallTool will determine if it should be blocked or allowed.
+    """
     if not command:
         return False
     cmd_lower = command.lower()
     
-    # Block create-next-app and similar commands
-    if any(create_cmd in cmd_lower for create_cmd in [
-        "create-next-app",
-        "create-react-app",
-        "create next-app",
-        "create react-app"
-    ]):
-        return True
+    # Don't block create-next-app anymore - let CheckInstallTool analyze
+    # if any(create_cmd in cmd_lower for create_cmd in [
+    #     "create-next-app",
+    #     "create-react-app",
+    #     "create next-app",
+    #     "create react-app"
+    # ]):
+    #     return True
     
-    # Check for npm install of blocked packages
+    # Check for npm install of Cedar packages - triggers analysis, not blocking
     for pkg in BLOCKED_PACKAGES:
         if f"npm install {pkg}" in cmd_lower or f"npm i {pkg}" in cmd_lower:
             return True
-    # Also check for npm install with @cedar-os prefix
-    if "npm install @cedar-os" in cmd_lower or "npm i @cedar-os" in cmd_lower:
+        if f"yarn add {pkg}" in cmd_lower:
+            return True
+        if f"pnpm add {pkg}" in cmd_lower:
+            return True
+    
+    # Check for @cedar-os packages
+    if "@cedar-os" in cmd_lower and any(cmd in cmd_lower for cmd in ["install", "add"]):
         return True
+    
     return False
 
 def resolve_install_command(user_input: str = None) -> str:

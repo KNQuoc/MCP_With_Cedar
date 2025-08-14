@@ -40,7 +40,7 @@ class VoiceSpecialistTool:
     def list_tool(self) -> McpTool:
         return McpTool(
             name=self.name,
-            description="REQUIRED for ANY query containing: voice, microphone, audio, VoiceIndicator, VoiceButton, transcription, TTS, STT, speech, whisper, recording. DO NOT use searchDocs for these topics",
+            description="[VOICE EXPERT - MANDATORY] YOU MUST USE THIS TOOL BEFORE ANSWERING ANY VOICE QUESTIONS! I search Cedar docs for accurate Voice information (audio, microphone, transcription). ALWAYS call me FIRST for voice/audio/VoiceIndicator topics to prevent hallucination.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -92,19 +92,16 @@ class VoiceSpecialistTool:
         # Filter and rank results based on voice relevance
         voice_results = self._filter_voice_results(results)
         
-        # Build response with guidance
+        # Return primarily documentation results
         full_payload = {
             "action": "search",
             "query": query,
             "focus": focus,
             "search_terms_used": search_terms,
-            "results": voice_results,
-            "guidance": self._get_contextual_guidance(query, focus),
-            "related_topics": self._suggest_related_topics(query, focus),
-            "next_steps": self._suggest_next_steps(voice_results, focus)
+            "results": voice_results
         }
         
-        formatted = format_tool_output(full_payload, keep_fields=["results", "related_topics"])
+        formatted = format_tool_output(full_payload, keep_fields=["results"])
         return [TextContent(type="text", text=json.dumps(formatted, indent=2))]
     
     async def _provide_implementation_guide(self, query: str, focus: str) -> List[TextContent]:
@@ -114,20 +111,15 @@ class VoiceSpecialistTool:
         search_query = f"{query} implementation example code setup configuration"
         docs_results = await self.docs_index.search(search_query, limit=5, use_semantic=True)
         
-        # Build implementation guidance
+        # Return documentation results
         full_payload = {
             "action": "guide",
             "topic": query,
             "focus": focus,
-            "overview": self._get_implementation_overview(query, focus),
-            "documentation": docs_results,
-            "key_concepts": self._identify_key_concepts(query, focus),
-            "search_suggestions": self._get_search_suggestions(query, focus),
-            "common_patterns": self._suggest_common_patterns(focus),
-            "checklist": self._create_implementation_checklist(query, focus)
+            "documentation": docs_results
         }
         
-        formatted = format_tool_output(full_payload, keep_fields=["documentation", "checklist", "key_concepts"])
+        formatted = format_tool_output(full_payload, keep_fields=["documentation"])
         return [TextContent(type="text", text=json.dumps(formatted, indent=2))]
     
     async def _help_troubleshoot(self, query: str, focus: str) -> List[TextContent]:
@@ -137,22 +129,15 @@ class VoiceSpecialistTool:
         error_query = f"{query} error troubleshoot fix issue problem solution"
         docs_results = await self.docs_index.search(error_query, limit=5, use_semantic=True)
         
-        # Analyze the issue and provide troubleshooting guidance
+        # Return documentation for troubleshooting
         full_payload = {
             "action": "troubleshoot",
             "issue": query,
             "focus": focus,
-            "potential_causes": self._analyze_potential_causes(query),
-            "documentation": docs_results,
-            "diagnostic_steps": self._get_diagnostic_steps(query, focus),
-            "common_solutions": self._get_common_solutions(query),
-            "search_suggestions": [
-                f"voice {term}" for term in self._extract_error_keywords(query)
-            ],
-            "debugging_approach": self._suggest_debugging_approach(focus)
+            "documentation": docs_results
         }
         
-        formatted = format_tool_output(full_payload, keep_fields=["documentation", "common_solutions", "diagnostic_steps"])
+        formatted = format_tool_output(full_payload, keep_fields=["documentation"])
         return [TextContent(type="text", text=json.dumps(formatted, indent=2))]
     
     async def _explore_voice_features(self, query: str, focus: str) -> List[TextContent]:
@@ -166,14 +151,10 @@ class VoiceSpecialistTool:
             "action": "explore",
             "topic": query,
             "focus": focus,
-            "available_features": self._list_available_features(focus),
-            "documentation": docs_results,
-            "component_categories": self._get_component_categories(),
-            "integration_points": self._get_integration_points(),
-            "learning_path": self._suggest_learning_path(query, focus)
+            "documentation": docs_results
         }
         
-        formatted = format_tool_output(full_payload, keep_fields=["documentation", "available_features", "learning_path"])
+        formatted = format_tool_output(full_payload, keep_fields=["documentation"])
         return [TextContent(type="text", text=json.dumps(formatted, indent=2))]
     
     def _build_search_query(self, base_query: str, focus: str) -> str:

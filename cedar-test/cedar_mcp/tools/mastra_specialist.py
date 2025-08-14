@@ -18,7 +18,7 @@ class MastraSpecialistTool:
     def list_tool(self) -> McpTool:
         return McpTool(
             name=self.name,
-            description="REQUIRED for ANY query containing: Mastra, agent(s), workflow(s), tool(s), memory, MCP integration, JWT, auth, dependency injection, runtime context. DO NOT use searchDocs for Mastra topics",
+            description="[MASTRA EXPERT - MANDATORY] YOU MUST USE THIS TOOL BEFORE ANSWERING ANY MASTRA QUESTIONS! I search Mastra docs for accurate backend information (agents, workflows, tools, memory). ALWAYS call me FIRST for Mastra topics to prevent hallucination.",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -41,30 +41,13 @@ class MastraSpecialistTool:
             full_payload = {
                 "prompt": prompt,
                 "results": [],
-                "note": "No matching Mastra documentation found",
-                "suggestion": "Try searching for: agents, workflows, tools, memory, MCP, authentication, or specific Mastra features"
+                "note": "No matching Mastra documentation found"
             }
-            formatted = format_tool_output(full_payload, keep_fields=["results", "note", "suggestion"])
+            formatted = format_tool_output(full_payload, keep_fields=["results", "note"])
             return [TextContent(type="text", text=json.dumps(formatted, indent=2))]
 
-        # Add guidance for Mastra-specific responses
-        guidance = {
-            "context": "Mastra backend framework documentation",
-            "focus_areas": [
-                "Agent creation and configuration",
-                "Workflow orchestration",
-                "Tool development",
-                "Memory systems",
-                "MCP integration",
-                "Authentication (JWT, etc.)",
-                "Runtime context and dependency injection"
-            ],
-            "response_format": "Provide implementation examples and code snippets when relevant"
-        }
-        
         full_payload = {
             "prompt": prompt,
-            "guidance": guidance,
             "results": results
         }
         
