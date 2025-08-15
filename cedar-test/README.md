@@ -14,12 +14,13 @@ Modular MCP server for Cedar-OS with clean separation between prompts and execut
 
 ### Features
 - **checkInstall**: CRITICAL - validates package installations and ensures Cedar CLI is used first
-- **searchDocs**: query embedded Cedar-OS docs (and optionally local docs) and return relevant chunks with citations
-- **searchMastraDocs**: query Mastra backend documentation
+- **searchDocs**: query Cedar-OS AND Mastra docs with auto-detection - returns relevant chunks with citations
 - **getRelevantFeature**: map a goal/context to relevant Cedar-OS features
 - **clarifyRequirements**: propose concise clarifying questions
 - **confirmRequirements**: validate requirements and generate implementation plan
 - **voiceSpecialist**: specialized tool for Cedar-OS Voice feature development
+- **spellsSpecialist**: expert guidance for Cedar Spells (AI-powered interactions)
+- **mastraSpecialist**: specialized Mastra backend expertise with integrated search
 
 ### Quick Start
 ```bash
@@ -108,16 +109,22 @@ Add to `~/.cursor/mcp.json`:
 
 ### Tools
 - **searchDocs**
-  - input: `{ query: string, limit?: number }`
-  - output: `{ prompt, results: [{ source, heading, content, matchCount }] }`
+  - input: `{ query: string, limit?: number, doc_type?: "cedar" | "mastra" | "auto" }`
+  - output: `{ results: [{ source, heading, content, matchCount }], doc_type: string }`
+  - Note: Automatically detects whether to search Cedar or Mastra docs based on query
 
 - **getRelevantFeature**
   - input: `{ goal: string, context?: string }`
-  - output: `{ prompt, features: { goal, context, candidates: [{ feature, name, score }] } }`
+  - output: `{ features: { goal, context, candidates: [{ feature, name, score }] } }`
 
 - **clarifyRequirements**
   - input: `{ goal: string, known_constraints?: string[] }`
-  - output: `{ prompt, questions: string[] }`
+  - output: `{ questions: string[] }`
+
+- **mastraSpecialist**
+  - input: `{ query: string, limit?: number }`
+  - output: `{ results: [...], prompt: string }`
+  - Note: Specialized Mastra backend search and guidance
 
 ### Resources
 - `cedar://docs` – describes the current docs index (`docs_path`, number of chunks, sources). Use `searchDocs` to query.
