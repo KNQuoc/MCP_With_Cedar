@@ -28,6 +28,7 @@ keywords = ["mcp", "cedar", "agentic", "ai", "agent", "orchestration", "state-ma
 [project.scripts]
 cedar-agentic-server = "cedar_mcp.server:cli"
 cedar-modular-mcp = "cedar_mcp.server:cli"
+cedar-mcp-web = "cedar_mcp.web_server:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["cedar_mcp"]
