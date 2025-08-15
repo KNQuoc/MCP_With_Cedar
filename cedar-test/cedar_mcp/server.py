@@ -114,7 +114,12 @@ class CedarModularMCPServer:
             or self._default_mastra_docs_path()
         )
         # Enable semantic search if Supabase credentials are available
-        enable_semantic = bool(os.getenv("SUPABASE_URL") and os.getenv("SUPABASE_KEY"))
+        supabase_url = os.getenv("SUPABASE_URL")
+        supabase_key = os.getenv("SUPABASE_KEY")
+        enable_semantic = bool(supabase_url and supabase_key)
+        print(f"[Cedar MCP] SUPABASE_URL found: {bool(supabase_url)}")
+        print(f"[Cedar MCP] SUPABASE_KEY found: {bool(supabase_key)}")
+        print(f"[Cedar MCP] Semantic search enabled: {enable_semantic}")
         # Create separate indexes for Cedar and Mastra docs
         self.cedar_docs_index = DocsIndex(resolved_docs_path, doc_type="cedar", enable_semantic_search=enable_semantic)
         self.mastra_docs_index = DocsIndex(resolved_mastra_docs_path, doc_type="mastra", enable_semantic_search=enable_semantic)

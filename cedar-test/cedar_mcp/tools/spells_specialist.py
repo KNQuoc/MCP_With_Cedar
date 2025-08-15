@@ -95,6 +95,25 @@ class SpellsSpecialistTool:
         # Filter and rank results based on spells relevance
         spells_results = self._filter_spells_results(results)
         
+        # Extract just the content text when simplified output is enabled
+        import os
+        simplified_env = os.getenv("CEDAR_MCP_SIMPLIFIED_OUTPUT", "true")
+        if simplified_env.lower() == "true":
+            # Extract only the content field from each result
+            text_contents = []
+            for result in spells_results:
+                if isinstance(result, dict):
+                    content = result.get("content", "")
+                    if content:
+                        text_contents.append(content)
+            
+            # Return simplified output with just the text
+            simplified_output = {
+                "results": text_contents,
+                "INSTRUCTION": "BASE YOUR ANSWER ONLY ON THESE SPELLS DOCUMENTATION RESULTS"
+            }
+            return [TextContent(type="text", text=json.dumps(simplified_output, indent=2))]
+        
         # Build response with guidance
         full_payload = {
             "action": "search",
@@ -118,6 +137,25 @@ class SpellsSpecialistTool:
         # Search for implementation examples and patterns
         search_query = f"{query} spell implementation example code useSpell hook activation"
         docs_results = await self.docs_index.search(search_query, limit=5, use_semantic=True)
+        
+        # Extract just the content text when simplified output is enabled
+        import os
+        simplified_env = os.getenv("CEDAR_MCP_SIMPLIFIED_OUTPUT", "true")
+        if simplified_env.lower() == "true":
+            # Extract only the content field from each result
+            text_contents = []
+            for result in docs_results:
+                if isinstance(result, dict):
+                    content = result.get("content", "")
+                    if content:
+                        text_contents.append(content)
+            
+            # Return simplified output with just the text
+            simplified_output = {
+                "documentation": text_contents,
+                "INSTRUCTION": "BASE YOUR ANSWER ONLY ON THESE SPELLS DOCUMENTATION RESULTS"
+            }
+            return [TextContent(type="text", text=json.dumps(simplified_output, indent=2))]
         
         # Return documentation with code examples
         full_payload = {

@@ -34,9 +34,13 @@ class DocsIndex:
         self.semantic_search: Optional[SemanticSearchService] = None
         if enable_semantic_search:
             try:
+                logger.info(f"[{doc_type}] Attempting to initialize semantic search...")
                 self.semantic_search = SemanticSearchService()
+                logger.info(f"[{doc_type}] Semantic search initialized successfully")
             except ValueError as e:
-                logger.info(f"Semantic search not available: {e}")
+                logger.info(f"[{doc_type}] Semantic search not available: {e}")
+            except Exception as e:
+                logger.error(f"[{doc_type}] Unexpected error initializing semantic search: {e}")
         # Only load from provided docs path
         if self.docs_path and self.docs_path.exists():
             self._load()
@@ -223,26 +227,39 @@ class DocsIndex:
         # Try semantic search first if available and enabled
         if use_semantic and self.semantic_search:
             try:
+                logger.debug(f"[{self.doc_type}] Using semantic search for query: {query[:50]}...")
                 semantic_results = await self.semantic_search.search_by_vector(
                     query=query,
                     limit=limit
                 )
                 
                 if semantic_results:
+                    logger.debug(f"[{self.doc_type}] Semantic search returned {len(semantic_results)} results")
                     # Convert semantic results to the expected format
                     results = []
+                    import os
+                    simplified_env = os.getenv("CEDAR_MCP_SIMPLIFIED_OUTPUT", "true")
+                    
                     for sr in semantic_results:
+                        # Filter out headers from metadata when simplified output is enabled
+                        if simplified_env.lower() == "true" and sr.metadata:
+                            filtered_metadata = {k: v for k, v in sr.metadata.items() if k != "headers"}
+                        else:
+                            filtered_metadata = sr.metadata
+                            
                         entry = {
                             "source": sr.source or "supabase",
                             "heading": sr.metadata.get("heading"),
                             "content": sr.content[:2000],  # truncate for payload size
                             "similarity": sr.similarity,
-                            "metadata": sr.metadata
+                            "metadata": filtered_metadata
                         }
                         results.append(entry)
                     return results
             except Exception as e:
-                logger.debug(f"Semantic search failed, falling back to keyword search: {e}")
+                logger.debug(f"[{self.doc_type}] Semantic search failed, falling back to keyword search: {e}")
+        else:
+            logger.debug(f"[{self.doc_type}] Using keyword search (semantic={use_semantic}, available={bool(self.semantic_search)})")
 
         def normalize(text: str) -> str:
             # Lowercase and replace non-alphanumeric with spaces, then collapse whitespace
@@ -294,6 +311,10 @@ class DocsIndex:
         scored.sort(key=lambda x: (x[0], len(x[2])), reverse=True)
         top = scored[: max(0, int(limit))]
 
+        # Check if simplified output is enabled
+        import os
+        simplified_env = os.getenv("CEDAR_MCP_SIMPLIFIED_OUTPUT", "true")
+        
         results: List[Dict[str, Any]] = []
         for score, chunk, token_hits in top:
             entry: Dict[str, Any] = {
@@ -301,8 +322,11 @@ class DocsIndex:
                 "heading": chunk.heading,
                 "content": chunk.content[:2000],  # truncate for payload size
                 "matchCount": int(score),
-                "matchedTokens": token_hits,
             }
+            
+            # Only include matchedTokens if not simplified
+            if simplified_env.lower() != "true":
+                entry["matchedTokens"] = token_hits
             
             # Add URL and section if available (for Mastra docs)
             if chunk.url:
@@ -311,24 +335,26 @@ class DocsIndex:
                 entry["section"] = chunk.section
             
             # Add best-effort line-level citations when the source is a local file we loaded
-            if chunk.source and chunk.source.startswith("/") and chunk.source in self._file_texts and token_hits:
-                file_text = self._file_texts[chunk.source]
-                token_line_map: Dict[str, List[int]] = {}
-                all_lines: List[int] = []
-                for token in token_hits.keys():
-                    lines_for_token = self._find_token_lines(file_text, token)
-                    if lines_for_token:
-                        token_line_map[token] = lines_for_token[:10]  # cap per token
-                        all_lines.extend(lines_for_token)
-                if all_lines:
-                    entry["citations"] = {
-                        "source": chunk.source,
-                        "approxSpan": {
-                            "start": min(all_lines),
-                            "end": max(all_lines),
-                        },
-                        "tokenLines": token_line_map,
-                    }
+            # Only include citations if not simplified
+            if simplified_env.lower() != "true":
+                if chunk.source and chunk.source.startswith("/") and chunk.source in self._file_texts and token_hits:
+                    file_text = self._file_texts[chunk.source]
+                    token_line_map: Dict[str, List[int]] = {}
+                    all_lines: List[int] = []
+                    for token in token_hits.keys():
+                        lines_for_token = self._find_token_lines(file_text, token)
+                        if lines_for_token:
+                            token_line_map[token] = lines_for_token[:10]  # cap per token
+                            all_lines.extend(lines_for_token)
+                    if all_lines:
+                        entry["citations"] = {
+                            "source": chunk.source,
+                            "approxSpan": {
+                                "start": min(all_lines),
+                                "end": max(all_lines),
+                            },
+                            "tokenLines": token_line_map,
+                        }
             results.append(entry)
         return results
 

@@ -107,6 +107,28 @@ class SearchDocsTool:
             formatted = format_tool_output(full_payload, keep_fields=["results", "note", "doc_type"])
             return [TextContent(type="text", text=json.dumps(formatted, indent=2))]
 
+        # Extract just the content text when simplified output is enabled
+        import os
+        simplified_env = os.getenv("CEDAR_MCP_SIMPLIFIED_OUTPUT", "true")
+        if simplified_env.lower() == "true":
+            # Extract only the content field from each result
+            text_contents = []
+            for result in results:
+                if isinstance(result, dict):
+                    # Get content directly if it exists
+                    content = result.get("content", "")
+                    if content:
+                        text_contents.append(content)
+            
+            # Return simplified output with just the text
+            simplified_output = {
+                "results": text_contents,
+                "doc_type": doc_type,
+                "INSTRUCTION": "BASE YOUR ANSWER ONLY ON THESE DOCUMENTATION RESULTS"
+            }
+            return [TextContent(type="text", text=json.dumps(simplified_output, indent=2))]
+        
+        # Original full output when not simplified
         full_payload = {
             "prompt": prompt, 
             "results": results,

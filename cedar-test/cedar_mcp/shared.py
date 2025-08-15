@@ -412,10 +412,10 @@ def format_tool_output(full_payload: Dict[str, Any], keep_fields: list = None) -
     # HARDCODED OVERRIDE FOR CLAUDE CODE COMPATIBILITY
     # Always use simplified mode for cleaner output
     # Comment out this line to respect the env variable
-    simplified = True  # Force simplified mode
+    # simplified = True  # Force simplified mode
     
     # To use env variable control, comment the line above and uncomment below:
-    # simplified = simplified_env.lower() == "true"
+    simplified = simplified_env.lower() == "true"
     
     # Debug logging
     import logging

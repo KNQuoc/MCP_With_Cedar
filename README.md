@@ -1,5 +1,14 @@
 # Cedar MCP Server - Complete Documentation
 
+## where the MCP server is at:
+
+- it turns on.
+- it uses Clade Code best (so far), if on Cursor then please use any Claude models at least/GPT o models, GPT-5 is dogshit at being a guide, haiku can answer knowledge-based questions well enough
+- it talks to the user properly (acts as an expert and acts moreso as “your guide” rather than “your one-shotter”)
+- it uses the proper tools to search for each range of knowledge, refers back to a tool every time it tries to go to new knowledge space (aka every question)
+- i think for beginners who wants a guide on Cedar, the MCP does a good enough job to get the user to get from 0-20% comfortably (give or take 3%)
+- product completion wise, it feels like its at around 85-90% (90% of the rest of the work is refining the I/O)
+
 ## Quick Navigation
 
 - [Quick Start](#quick-start) - Get running in 2 minutes
@@ -117,7 +126,76 @@ Add to `~/.cursor/mcp.json`:
 
 After configuration, restart your IDE. The Cedar MCP server will start automatically.
 
-## Environment Configuration
+## Railway Deployment
+
+### Deploy to Railway (Cloud Hosting)
+
+The Cedar MCP Server can be deployed to Railway as a web service with HTTP/WebSocket endpoints:
+
+#### Quick Deploy Steps
+
+1. **Push to GitHub**
+
+   ```bash
+   git add .
+   git commit -m "Add Railway deployment"
+   git push origin main
+   ```
+
+2. **Deploy on Railway**
+
+   - Go to [Railway.app](https://railway.app)
+   - Click "New Project" → "Deploy from GitHub repo"
+   - Select your repository
+   - Railway will auto-detect the Python project
+
+3. **Configure Environment Variables in Railway Dashboard**
+
+   Required:
+
+   ```
+   CEDAR_LOG_LEVEL=INFO
+   CEDAR_MCP_SIMPLIFIED_OUTPUT=true
+   ```
+
+   Optional (for semantic search):
+
+   ```
+   SUPABASE_URL=your_supabase_url
+   SUPABASE_KEY=your_supabase_key
+   OPENAI_API_KEY=your_openai_key
+   ```
+
+4. **Access Your Deployed Server**
+
+   Railway provides a URL like `https://your-app.up.railway.app`
+
+   Test endpoints:
+
+   ```bash
+   # Health check
+   curl https://your-app.up.railway.app/health
+
+   # List tools
+   curl https://your-app.up.railway.app/tools
+
+   # Execute tool
+   curl -X POST https://your-app.up.railway.app/tool \
+     -H "Content-Type: application/json" \
+     -d '{"tool": "searchDocs", "arguments": {"query": "voice setup"}}'
+   ```
+
+#### Railway Configuration Files
+
+The repository includes Railway-specific files:
+
+- `railway.json` - Railway deployment configuration
+- `cedar_mcp/web_server.py` - HTTP/WebSocket wrapper for MCP
+- `DEPLOYMENT.md` - Detailed deployment guide
+
+**Note**: The web wrapper translates HTTP/WebSocket requests to MCP protocol calls, making the stdio-based MCP server accessible via web endpoints.
+
+## Environment Configuration (Local Development)
 
 Create a `.env` file in the cedar-test directory:
 
