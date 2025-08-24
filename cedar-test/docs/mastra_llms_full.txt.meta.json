@@ -1,9 +1,9 @@
 {
   "source_url": "https://mastra.ai/llms-full.txt",
-  "etag": "W/\"dbce248a2c599fb52a441dca1538bd46\"",
-  "last_modified": "Wed, 13 Aug 2025 15:49:44 GMT",
-  "fetched_at_iso": "2025-08-13T16:31:36.806235+00:00",
-  "output": "/Users/quocngo/Documents/GitHub/Cedar_Trial/cedar-test/docs/mastra_llms_full.txt",
-  "hash": "afe9274658ac41556b17f60a5d72a535b8391f64f630a804869364d6800c418d",
+  "etag": "W/\"83468549e79c0a39889e915b3346826b\"",
+  "last_modified": "Sat, 23 Aug 2025 21:03:05 GMT",
+  "fetched_at_iso": "2025-08-24T19:48:34.265508+00:00",
+  "output": "c:\\Users\\USER\\OneDrive\\Documents\\MCP_With_Cedar\\cedar-test\\docs\\mastra_llms_full.txt",
+  "hash": "0303a1bcb28dd39f36635721c8c54e422b724ecec57b379955dca87483410f43",
   "content_type": "text/plain; charset=utf-8"
 }

@@ -44,6 +44,7 @@ from .tools.confirm_requirements import ConfirmRequirementsTool
 from .tools.check_install import CheckInstallTool
 from .tools.voice_specialist import VoiceSpecialistTool
 from .tools.spells_specialist import SpellsSpecialistTool
+from .tools.context_specialist import ContextSpecialistTool
 # Removed ScanCedarComponentsTool - redundant now that we tell AI components are in src/components/cedar-os/
 from .shared import GROUNDING_CONFIG, DEFAULT_INSTALL_COMMAND, INSTALLATION_RULES
 
@@ -89,6 +90,7 @@ class CedarModularMCPServer:
     
     MY TOOLS (MANDATORY USE FOR ACCURACY):
     • searchDocs: MUST USE FIRST for ANY Cedar/Mastra question
+    • contextSpecialist: MUST USE for Agent Input Context questions (mentions, state subscription)
     • spellsSpecialist: MUST USE for Spells questions (searches docs automatically)
     • voiceSpecialist: MUST USE for Voice questions (searches docs automatically)
     • mastraSpecialist: MUST USE for Mastra questions (searches docs automatically)
@@ -146,6 +148,7 @@ class CedarModularMCPServer:
         check_install_tool = CheckInstallTool()
         voice_tool = VoiceSpecialistTool(self.cedar_docs_index)
         spells_tool = SpellsSpecialistTool(self.cedar_docs_index)
+        context_tool = ContextSpecialistTool(self.cedar_docs_index)
         # Removed scan_components_tool - AI now knows components are in src/components/cedar-os/
 
         self.tool_handlers = {
@@ -157,6 +160,7 @@ class CedarModularMCPServer:
             check_install_tool.name: check_install_tool,
             voice_tool.name: voice_tool,
             spells_tool.name: spells_tool,
+            context_tool.name: context_tool,
         }
 
     def _setup_handlers(self) -> None:
@@ -184,7 +188,7 @@ class CedarModularMCPServer:
                 # Track that a documentation search tool has been called
                 doc_search_tools = {
                     "searchDocs", "mastraSpecialist", "voiceSpecialist", 
-                    "spellsSpecialist"
+                    "spellsSpecialist", "contextSpecialist"
                 }
                 
                 # Log documentation search for validation
@@ -195,7 +199,7 @@ class CedarModularMCPServer:
                 allowed_without_confirm = {
                     "clarifyRequirements", "confirmRequirements", "searchDocs", 
                     "mastraSpecialist", "checkInstall", "voiceSpecialist", 
-                    "spellsSpecialist"
+                    "spellsSpecialist", "contextSpecialist"
                 }
                 
                 if name not in allowed_without_confirm and not self._requirements_confirmed:
@@ -229,7 +233,7 @@ class CedarModularMCPServer:
 
                 # If tool returns no citations and is docs-related, append a guard note
                 try:
-                    if name in {"searchDocs", "mastraSpecialist", "getRelevantFeature", "voiceSpecialist", "spellsSpecialist"}:
+                    if name in {"searchDocs", "mastraSpecialist", "getRelevantFeature", "voiceSpecialist", "spellsSpecialist", "contextSpecialist"}:
                         enriched = []
                         for item in result:
                             payload = json.loads(item.text) if item.text else {}
