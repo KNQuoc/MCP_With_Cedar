@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "cedar": {
+      "type": "stdio",
+      "command": "python",
+      "args": [
+        "-m",
+        "cedar_mcp"
+      ],
+      "env": {}
+    }
+  }
+}
