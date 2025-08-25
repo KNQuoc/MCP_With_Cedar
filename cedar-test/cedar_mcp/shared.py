@@ -430,16 +430,26 @@ def format_tool_output(full_payload: Dict[str, Any], keep_fields: list = None) -
     if keep_fields is None:
         keep_fields = ["results"]
     
+    # IMPORTANT: Never include internal processing fields in simplified mode
+    # These fields are for debugging only and should not be exposed to the AI
+    internal_fields = {
+        "prompt", "search_terms_used", "query", "focus", "action", 
+        "topic", "issue", "guidance", "suggestions", "checklist",
+        "search_query", "enhanced_query", "search_terms"
+    }
+    
+    # Filter out internal fields from keep_fields if in simplified mode
+    if simplified and keep_fields:
+        keep_fields = [f for f in keep_fields if f not in internal_fields]
+    
     # Build simplified payload with only specified fields
     simplified_payload = {}
     for field in keep_fields:
         if field in full_payload:
             simplified_payload[field] = full_payload[field]
     
-    # Always include action/type if present (for context)
-    if "action" in full_payload:
-        simplified_payload["action"] = full_payload["action"]
-    if "type" in full_payload:
+    # Include type if present (but not action, as it's internal)
+    if "type" in full_payload and "type" not in internal_fields:
         simplified_payload["type"] = full_payload["type"]
     
     # Include error if present

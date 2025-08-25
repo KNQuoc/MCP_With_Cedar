@@ -112,13 +112,21 @@ class VoiceSpecialistTool:
             return [TextContent(type="text", text=json.dumps(simplified_output, indent=2))]
         
         # Return primarily documentation results
-        full_payload = {
-            "action": "search",
-            "query": query,
-            "focus": focus,
-            "search_terms_used": search_terms,
-            "results": voice_results
-        }
+        # Only include internal fields in debug mode
+        if simplified_env.lower() == "true":
+            # Simplified mode - only essential fields
+            full_payload = {
+                "results": voice_results
+            }
+        else:
+            # Debug mode - include all fields
+            full_payload = {
+                "action": "search",
+                "query": query,
+                "focus": focus,
+                "search_terms_used": search_terms,
+                "results": voice_results
+            }
         
         formatted = format_tool_output(full_payload, keep_fields=["results"])
         return [TextContent(type="text", text=json.dumps(formatted, indent=2))]
@@ -150,12 +158,22 @@ class VoiceSpecialistTool:
             return [TextContent(type="text", text=json.dumps(simplified_output, indent=2))]
         
         # Return documentation results
-        full_payload = {
-            "action": "guide",
-            "topic": query,
-            "focus": focus,
-            "documentation": docs_results
-        }
+        # Only include internal fields in debug mode
+        import os
+        simplified_env = os.getenv("CEDAR_MCP_SIMPLIFIED_OUTPUT", "true")
+        if simplified_env.lower() == "true":
+            # Simplified mode - only essential fields
+            full_payload = {
+                "documentation": docs_results
+            }
+        else:
+            # Debug mode - include all fields
+            full_payload = {
+                "action": "guide",
+                "topic": query,
+                "focus": focus,
+                "documentation": docs_results
+            }
         
         formatted = format_tool_output(full_payload, keep_fields=["documentation"])
         return [TextContent(type="text", text=json.dumps(formatted, indent=2))]
@@ -168,12 +186,22 @@ class VoiceSpecialistTool:
         docs_results = await self.docs_index.search(error_query, limit=5, use_semantic=True)
         
         # Return documentation for troubleshooting
-        full_payload = {
-            "action": "troubleshoot",
-            "issue": query,
-            "focus": focus,
-            "documentation": docs_results
-        }
+        # Only include internal fields in debug mode
+        import os
+        simplified_env = os.getenv("CEDAR_MCP_SIMPLIFIED_OUTPUT", "true")
+        if simplified_env.lower() == "true":
+            # Simplified mode - only essential fields
+            full_payload = {
+                "documentation": docs_results
+            }
+        else:
+            # Debug mode - include all fields
+            full_payload = {
+                "action": "troubleshoot",
+                "issue": query,
+                "focus": focus,
+                "documentation": docs_results
+            }
         
         formatted = format_tool_output(full_payload, keep_fields=["documentation"])
         return [TextContent(type="text", text=json.dumps(formatted, indent=2))]
@@ -185,12 +213,22 @@ class VoiceSpecialistTool:
         explore_query = f"voice {query} features capabilities components"
         docs_results = await self.docs_index.search(explore_query, limit=10, use_semantic=True)
         
-        full_payload = {
-            "action": "explore",
-            "topic": query,
-            "focus": focus,
-            "documentation": docs_results
-        }
+        # Only include internal fields in debug mode
+        import os
+        simplified_env = os.getenv("CEDAR_MCP_SIMPLIFIED_OUTPUT", "true")
+        if simplified_env.lower() == "true":
+            # Simplified mode - only essential fields
+            full_payload = {
+                "documentation": docs_results
+            }
+        else:
+            # Debug mode - include all fields
+            full_payload = {
+                "action": "explore",
+                "topic": query,
+                "focus": focus,
+                "documentation": docs_results
+            }
         
         formatted = format_tool_output(full_payload, keep_fields=["documentation"])
         return [TextContent(type="text", text=json.dumps(formatted, indent=2))]

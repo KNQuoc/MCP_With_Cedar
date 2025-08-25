@@ -114,21 +114,31 @@ class SpellsSpecialistTool:
             }
             return [TextContent(type="text", text=json.dumps(simplified_output, indent=2))]
         
-        # Build response with guidance
-        full_payload = {
-            "action": "search",
-            "query": query,
-            "focus": focus,
-            "search_terms_used": search_terms,
-            "results": spells_results,
-            "IMPORTANT": "BASE YOUR ANSWER ONLY ON THESE DOCUMENTATION RESULTS - DO NOT HALLUCINATE",
-            "guidance": self._get_contextual_guidance(query, focus),
-            "related_topics": self._suggest_related_topics(query, focus),
-            "next_steps": self._suggest_next_steps(spells_results, focus),
-            "code_examples": self._extract_code_from_results(spells_results)
-        }
+        # Build response - only include internal fields in debug mode
+        import os
+        simplified_env = os.getenv("CEDAR_MCP_SIMPLIFIED_OUTPUT", "true")
+        if simplified_env.lower() == "true":
+            # Simplified mode - only essential fields
+            full_payload = {
+                "results": spells_results,
+                "code_examples": self._extract_code_from_results(spells_results)
+            }
+        else:
+            # Debug mode - include all fields
+            full_payload = {
+                "action": "search",
+                "query": query,
+                "focus": focus,
+                "search_terms_used": search_terms,
+                "results": spells_results,
+                "IMPORTANT": "BASE YOUR ANSWER ONLY ON THESE DOCUMENTATION RESULTS - DO NOT HALLUCINATE",
+                "guidance": self._get_contextual_guidance(query, focus),
+                "related_topics": self._suggest_related_topics(query, focus),
+                "next_steps": self._suggest_next_steps(spells_results, focus),
+                "code_examples": self._extract_code_from_results(spells_results)
+            }
         
-        formatted = format_tool_output(full_payload, keep_fields=["results", "code_examples", "related_topics"])
+        formatted = format_tool_output(full_payload, keep_fields=["results", "code_examples"])
         return [TextContent(type="text", text=json.dumps(formatted, indent=2))]
     
     async def _provide_implementation_guide(self, query: str, focus: str) -> List[TextContent]:
@@ -158,13 +168,24 @@ class SpellsSpecialistTool:
             return [TextContent(type="text", text=json.dumps(simplified_output, indent=2))]
         
         # Return documentation with code examples
-        full_payload = {
-            "action": "guide",
-            "topic": query,
-            "focus": focus,
-            "documentation": docs_results,
-            "code_examples": self._extract_code_from_results(docs_results)
-        }
+        # Only include internal fields in debug mode
+        import os
+        simplified_env = os.getenv("CEDAR_MCP_SIMPLIFIED_OUTPUT", "true")
+        if simplified_env.lower() == "true":
+            # Simplified mode - only essential fields
+            full_payload = {
+                "documentation": docs_results,
+                "code_examples": self._extract_code_from_results(docs_results)
+            }
+        else:
+            # Debug mode - include all fields
+            full_payload = {
+                "action": "guide",
+                "topic": query,
+                "focus": focus,
+                "documentation": docs_results,
+                "code_examples": self._extract_code_from_results(docs_results)
+            }
         
         formatted = format_tool_output(full_payload, keep_fields=["documentation", "code_examples"])
         return [TextContent(type="text", text=json.dumps(formatted, indent=2))]
@@ -177,19 +198,31 @@ class SpellsSpecialistTool:
         docs_results = await self.docs_index.search(error_query, limit=5, use_semantic=True)
         
         # Analyze the issue and provide troubleshooting guidance
-        full_payload = {
-            "action": "troubleshoot",
-            "issue": query,
-            "focus": focus,
-            "potential_causes": self._analyze_potential_causes(query),
-            "documentation": docs_results,
-            "diagnostic_steps": self._get_diagnostic_steps(query, focus),
-            "common_solutions": self._get_common_solutions(query),
-            "search_suggestions": [
-                f"spell {term}" for term in self._extract_error_keywords(query)
-            ],
-            "debugging_tips": self._suggest_debugging_tips(focus)
-        }
+        # Only include internal fields in debug mode
+        import os
+        simplified_env = os.getenv("CEDAR_MCP_SIMPLIFIED_OUTPUT", "true")
+        if simplified_env.lower() == "true":
+            # Simplified mode - only essential fields
+            full_payload = {
+                "documentation": docs_results,
+                "common_solutions": self._get_common_solutions(query),
+                "diagnostic_steps": self._get_diagnostic_steps(query, focus)
+            }
+        else:
+            # Debug mode - include all fields
+            full_payload = {
+                "action": "troubleshoot",
+                "issue": query,
+                "focus": focus,
+                "potential_causes": self._analyze_potential_causes(query),
+                "documentation": docs_results,
+                "diagnostic_steps": self._get_diagnostic_steps(query, focus),
+                "common_solutions": self._get_common_solutions(query),
+                "search_suggestions": [
+                    f"spell {term}" for term in self._extract_error_keywords(query)
+                ],
+                "debugging_tips": self._suggest_debugging_tips(focus)
+            }
         
         formatted = format_tool_output(full_payload, keep_fields=["documentation", "common_solutions", "diagnostic_steps"])
         return [TextContent(type="text", text=json.dumps(formatted, indent=2))]
@@ -201,17 +234,29 @@ class SpellsSpecialistTool:
         explore_query = f"spell {query} features capabilities radial menu activation useSpell"
         docs_results = await self.docs_index.search(explore_query, limit=10, use_semantic=True)
         
-        full_payload = {
-            "action": "explore",
-            "topic": query,
-            "focus": focus,
-            "available_features": self._list_available_features(focus),
-            "documentation": docs_results,
-            "spell_types": self._get_spell_types(),
-            "activation_methods": self._get_activation_methods(),
-            "use_cases": self._suggest_use_cases(query, focus),
-            "learning_path": self._suggest_learning_path(query, focus)
-        }
+        # Only include internal fields in debug mode
+        import os
+        simplified_env = os.getenv("CEDAR_MCP_SIMPLIFIED_OUTPUT", "true")
+        if simplified_env.lower() == "true":
+            # Simplified mode - only essential fields
+            full_payload = {
+                "documentation": docs_results,
+                "available_features": self._list_available_features(focus),
+                "use_cases": self._suggest_use_cases(query, focus)
+            }
+        else:
+            # Debug mode - include all fields
+            full_payload = {
+                "action": "explore",
+                "topic": query,
+                "focus": focus,
+                "available_features": self._list_available_features(focus),
+                "documentation": docs_results,
+                "spell_types": self._get_spell_types(),
+                "activation_methods": self._get_activation_methods(),
+                "use_cases": self._suggest_use_cases(query, focus),
+                "learning_path": self._suggest_learning_path(query, focus)
+            }
         
         formatted = format_tool_output(full_payload, keep_fields=["documentation", "available_features", "use_cases"])
         return [TextContent(type="text", text=json.dumps(formatted, indent=2))]

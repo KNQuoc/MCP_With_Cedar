@@ -38,13 +38,25 @@ class MastraSpecialistTool:
         
         # If no results found, return helpful message
         if not results:
-            full_payload = {
-                "prompt": prompt,
-                "results": [],
-                "note": "No matching Mastra documentation found"
-            }
-            formatted = format_tool_output(full_payload, keep_fields=["results", "note"])
-            return [TextContent(type="text", text=json.dumps(formatted, indent=2))]
+            # Check if simplified output is enabled
+            import os
+            simplified_env = os.getenv("CEDAR_MCP_SIMPLIFIED_OUTPUT", "true")
+            if simplified_env.lower() == "true":
+                # Don't include prompt in simplified mode
+                simplified_output = {
+                    "results": [],
+                    "note": "No matching Mastra documentation found"
+                }
+                return [TextContent(type="text", text=json.dumps(simplified_output, indent=2))]
+            else:
+                # Include prompt only in full mode
+                full_payload = {
+                    "prompt": prompt,
+                    "results": [],
+                    "note": "No matching Mastra documentation found"
+                }
+                formatted = format_tool_output(full_payload, keep_fields=["results", "note"])
+                return [TextContent(type="text", text=json.dumps(formatted, indent=2))]
 
         # Extract just the content text when simplified output is enabled
         import os
@@ -66,10 +78,13 @@ class MastraSpecialistTool:
             return [TextContent(type="text", text=json.dumps(simplified_output, indent=2))]
         
         # Original full output when not simplified
+        # Only include prompt in full mode
         full_payload = {
-            "prompt": prompt,
             "results": results
         }
+        # Add prompt only if not simplified
+        if simplified_env.lower() != "true":
+            full_payload["prompt"] = prompt
         
         formatted = format_tool_output(full_payload, keep_fields=["results"])
         return [TextContent(type="text", text=json.dumps(formatted, indent=2))]

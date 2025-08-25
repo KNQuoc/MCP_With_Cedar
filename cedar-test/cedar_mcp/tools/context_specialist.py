@@ -112,13 +112,21 @@ class ContextSpecialistTool:
             return [TextContent(type="text", text=json.dumps(simplified_output, indent=2))]
         
         # Return primarily documentation results
-        full_payload = {
-            "action": "search",
-            "query": query,
-            "focus": focus,
-            "search_terms_used": search_terms,
-            "results": context_results
-        }
+        # Only include internal fields in debug mode
+        if simplified_env.lower() == "true":
+            # Simplified mode - only essential fields
+            full_payload = {
+                "results": context_results
+            }
+        else:
+            # Debug mode - include all fields
+            full_payload = {
+                "action": "search",
+                "query": query,
+                "focus": focus,
+                "search_terms_used": search_terms,
+                "results": context_results
+            }
         
         formatted = format_tool_output(full_payload, keep_fields=["results"])
         return [TextContent(type="text", text=json.dumps(formatted, indent=2))]
@@ -150,12 +158,20 @@ class ContextSpecialistTool:
             return [TextContent(type="text", text=json.dumps(simplified_output, indent=2))]
         
         # Return documentation results
-        full_payload = {
-            "action": "guide",
-            "topic": query,
-            "focus": focus,
-            "documentation": docs_results
-        }
+        # Only include internal fields in debug mode
+        if simplified_env.lower() == "true":
+            # Simplified mode - only essential fields
+            full_payload = {
+                "documentation": docs_results
+            }
+        else:
+            # Debug mode - include all fields
+            full_payload = {
+                "action": "guide",
+                "topic": query,
+                "focus": focus,
+                "documentation": docs_results
+            }
         
         formatted = format_tool_output(full_payload, keep_fields=["documentation"])
         return [TextContent(type="text", text=json.dumps(formatted, indent=2))]
@@ -167,13 +183,40 @@ class ContextSpecialistTool:
         error_query = f"{query} error troubleshoot fix issue problem solution context state mention"
         docs_results = await self.docs_index.search(error_query, limit=5, use_semantic=True)
         
+        # Extract just the content text when simplified output is enabled
+        import os
+        simplified_env = os.getenv("CEDAR_MCP_SIMPLIFIED_OUTPUT", "true")
+        if simplified_env.lower() == "true":
+            # Extract only the content field from each result
+            text_contents = []
+            for result in docs_results:
+                if isinstance(result, dict):
+                    content = result.get("content", "")
+                    if content:
+                        text_contents.append(content)
+            
+            # Return simplified output with just the text
+            simplified_output = {
+                "documentation": text_contents,
+                "INSTRUCTION": "BASE YOUR ANSWER ONLY ON THESE AGENT INPUT CONTEXT TROUBLESHOOTING RESULTS"
+            }
+            return [TextContent(type="text", text=json.dumps(simplified_output, indent=2))]
+        
         # Return documentation for troubleshooting
-        full_payload = {
-            "action": "troubleshoot",
-            "issue": query,
-            "focus": focus,
-            "documentation": docs_results
-        }
+        # Only include internal fields in debug mode
+        if simplified_env.lower() == "true":
+            # Simplified mode - only essential fields
+            full_payload = {
+                "documentation": docs_results
+            }
+        else:
+            # Debug mode - include all fields
+            full_payload = {
+                "action": "troubleshoot",
+                "issue": query,
+                "focus": focus,
+                "documentation": docs_results
+            }
         
         formatted = format_tool_output(full_payload, keep_fields=["documentation"])
         return [TextContent(type="text", text=json.dumps(formatted, indent=2))]
@@ -185,12 +228,39 @@ class ContextSpecialistTool:
         explore_query = f"Agent Input Context {query} features capabilities mentions subscription state"
         docs_results = await self.docs_index.search(explore_query, limit=10, use_semantic=True)
         
-        full_payload = {
-            "action": "explore",
-            "topic": query,
-            "focus": focus,
-            "documentation": docs_results
-        }
+        # Extract just the content text when simplified output is enabled
+        import os
+        simplified_env = os.getenv("CEDAR_MCP_SIMPLIFIED_OUTPUT", "true")
+        if simplified_env.lower() == "true":
+            # Extract only the content field from each result
+            text_contents = []
+            for result in docs_results:
+                if isinstance(result, dict):
+                    content = result.get("content", "")
+                    if content:
+                        text_contents.append(content)
+            
+            # Return simplified output with just the text
+            simplified_output = {
+                "documentation": text_contents,
+                "INSTRUCTION": "BASE YOUR ANSWER ONLY ON THESE AGENT INPUT CONTEXT EXPLORATION RESULTS"
+            }
+            return [TextContent(type="text", text=json.dumps(simplified_output, indent=2))]
+        
+        # Only include internal fields in debug mode
+        if simplified_env.lower() == "true":
+            # Simplified mode - only essential fields
+            full_payload = {
+                "documentation": docs_results
+            }
+        else:
+            # Debug mode - include all fields
+            full_payload = {
+                "action": "explore",
+                "topic": query,
+                "focus": focus,
+                "documentation": docs_results
+            }
         
         formatted = format_tool_output(full_payload, keep_fields=["documentation"])
         return [TextContent(type="text", text=json.dumps(formatted, indent=2))]
