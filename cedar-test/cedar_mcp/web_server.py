@@ -51,9 +51,83 @@ class MCPWebServer:
                 allow_methods="*"
             )
         })
-        
         for route in list(self.app.router.routes()):
             cors.add(route)
+    
+    async def _call_tool_with_server_logic(self, name: str, arguments: Dict[str, Any]):
+        """
+        Call tool handler with the same logic as the MCP server's handle_call_tool method.
+        This ensures simplified output and environment variable handling works consistently.
+        """
+        import json
+        import mcp.types as types
+        
+        try:
+            # Track that a documentation search tool has been called
+            doc_search_tools = {
+                "searchDocs", "mastraSpecialist", "voiceSpecialist", 
+                "spellsSpecialist", "contextSpecialist"
+            }
+            
+            # Log documentation search for validation
+            if name in doc_search_tools:
+                logger.info(f"Documentation search performed: {name} with query: {arguments.get('query', '')}")
+            
+            # Soft enforcement - recommend but don't block most tools
+            allowed_without_confirm = {
+                "clarifyRequirements", "confirmRequirements", "searchDocs", 
+                "mastraSpecialist", "checkInstall", "voiceSpecialist", 
+                "spellsSpecialist", "contextSpecialist"
+            }
+            
+            if name not in allowed_without_confirm and not self.mcp_server._requirements_confirmed:
+                # Soft suggestion instead of hard block
+                if name == "getRelevantFeature" and not self.mcp_server._requirements_confirmed:
+                    # For feature requests, just add a gentle reminder
+                    pass  # Allow it to proceed with just a note
+
+            handler = self.mcp_server.tool_handlers.get(name)
+            if not handler:
+                raise ValueError(f"Unknown tool: {name}")
+            # Handlers that multiplex tools accept (name, arguments)
+            if hasattr(handler, "handle"):
+                try:
+                    # Try (name, args) signature first
+                    result = await handler.handle(name, arguments)  # type: ignore
+                except TypeError:
+                    result = await self._call_tool_with_server_logic(tool_name, arguments)  # type: ignore
+            else:
+                raise ValueError(f"Handler for {name} lacks handle()")
+
+            # Special-case: update gate flag on confirmRequirements
+            if name == "confirmRequirements":
+                try:
+                    # The tool returns a single TextContent JSON payload
+                    payload = json.loads(result[0].text) if result and result[0].text else {}
+                    self.mcp_server._requirements_confirmed = bool(payload.get("satisfied"))
+                except Exception:
+                    # Keep gate closed on parse issues
+                    self.mcp_server._requirements_confirmed = False
+
+            # If tool returns no citations and is docs-related, append a guard note
+            try:
+                if name in {"searchDocs", "mastraSpecialist", "getRelevantFeature", "voiceSpecialist", "spellsSpecialist", "contextSpecialist"}:
+                    enriched = []
+                    for item in result:
+                        payload = json.loads(item.text) if item.text else {}
+                        if not payload.get("results"):
+                            payload["note"] = payload.get("note") or "not in docs"
+                        # Add reminder to base answers on documentation
+                        if payload.get("results"):
+                            payload["INSTRUCTION"] = "BASE YOUR ANSWER ONLY ON THESE DOCUMENTATION RESULTS"
+                        enriched.append(types.TextContent(type="text", text=json.dumps(payload, indent=2)))
+                    return enriched
+            except Exception:
+                pass
+            return result
+        except Exception as exc:
+            logger.exception("Tool execution error: %s", exc)
+            return [types.TextContent(type="text", text=json.dumps({"error": str(exc)}))]
     
     async def health_check(self, request):
         """Health check endpoint for Railway."""
@@ -91,8 +165,9 @@ class MCPWebServer:
                     "error": f"Unknown tool: {tool_name}"
                 }, status=404)
             
-            # Call the tool handler
-            result = await handler.handle(arguments)
+            # Call the tool handler through the server's tool call processing
+            # This ensures consistent behavior with stdio server and respects environment variables
+            result = await self._call_tool_with_server_logic(tool_name, arguments)
             
             # Format the result
             formatted_result = []
@@ -134,7 +209,7 @@ class MCPWebServer:
                             })
                             continue
                         
-                        result = await handler.handle(data.get('arguments', {}))
+                        result = await self._call_tool_with_server_logic(tool_name, data.get('arguments', {}))
                         formatted_result = []
                         for r in result:
                             if hasattr(r, 'text'):
@@ -219,7 +294,7 @@ class MCPWebServer:
                         }
                     })
                 
-                result = await handler.handle(arguments)
+                result = await self._call_tool_with_server_logic(tool_name, arguments)
                 formatted_result = []
                 for r in result:
                     if hasattr(r, 'text'):
@@ -375,7 +450,7 @@ class MCPWebServer:
                         }
                     })
                 else:
-                    result = await handler.handle(arguments)
+                    result = await self._call_tool_with_server_logic(tool_name, arguments)
                     formatted_result = []
                     for r in result:
                         if hasattr(r, 'text'):
