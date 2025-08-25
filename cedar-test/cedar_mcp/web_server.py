@@ -9,6 +9,7 @@ import json
 import logging
 import os
 import uuid
+from datetime import datetime
 from typing import Optional, Dict, Any
 from aiohttp import web
 from aiohttp import web_ws
@@ -37,6 +38,8 @@ class MCPWebServer:
         # SSE endpoints for Claude Desktop
         self.app.router.add_get('/sse', self.sse_handler)
         self.app.router.add_post('/sse', self.sse_handler)  # Claude may use POST
+        # JSON-RPC endpoint for Cursor
+        self.app.router.add_post('/jsonrpc', self.jsonrpc_handler)
     
     def setup_cors(self):
         """Setup CORS for web clients."""
@@ -159,6 +162,119 @@ class MCPWebServer:
                 logger.error(f'WebSocket error: {ws.exception()}')
         
         return ws
+    
+    async def jsonrpc_handler(self, request):
+        """JSON-RPC handler for Cursor MCP integration."""
+        try:
+            data = await request.json()
+            
+            # Handle different MCP message types
+            if data.get('method') == 'initialize':
+                return web.json_response({
+                    "jsonrpc": "2.0",
+                    "id": data.get('id', 1),
+                    "result": {
+                        "protocolVersion": "0.1.0",
+                        "capabilities": {
+                            "tools": True,
+                            "resources": True
+                        },
+                        "serverInfo": {
+                            "name": "cedar-mcp",
+                            "version": "0.3.0"
+                        }
+                    }
+                })
+            
+            elif data.get('method') == 'tools/list':
+                tools = []
+                for name, handler in self.mcp_server.tool_handlers.items():
+                    if hasattr(handler, 'list_tool'):
+                        tool = handler.list_tool()
+                        tools.append({
+                            "name": tool.name,
+                            "description": tool.description,
+                            "inputSchema": tool.inputSchema
+                        })
+                
+                return web.json_response({
+                    "jsonrpc": "2.0",
+                    "id": data.get('id', 1),
+                    "result": {"tools": tools}
+                })
+            
+            elif data.get('method') == 'tools/call':
+                params = data.get('params', {})
+                tool_name = params.get('name')
+                arguments = params.get('arguments', {})
+                
+                handler = self.mcp_server.tool_handlers.get(tool_name)
+                if not handler:
+                    return web.json_response({
+                        "jsonrpc": "2.0",
+                        "id": data.get('id', 1),
+                        "error": {
+                            "code": -32601,
+                            "message": f"Unknown tool: {tool_name}"
+                        }
+                    })
+                
+                result = await handler.handle(arguments)
+                formatted_result = []
+                for r in result:
+                    if hasattr(r, 'text'):
+                        formatted_result.append({"type": "text", "text": r.text})
+                    else:
+                        formatted_result.append({"type": "text", "text": str(r)})
+                
+                return web.json_response({
+                    "jsonrpc": "2.0",
+                    "id": data.get('id', 1),
+                    "result": {"content": formatted_result}
+                })
+            
+            elif data.get('method') == 'resources/list':
+                return web.json_response({
+                    "jsonrpc": "2.0",
+                    "id": data.get('id', 1),
+                    "result": {
+                        "resources": [
+                            {
+                                "uri": "cedar://docs",
+                                "name": "Cedar Docs",
+                                "description": "Indexed Cedar-OS documentation",
+                                "mimeType": "application/json"
+                            },
+                            {
+                                "uri": "mastra://docs",
+                                "name": "Mastra Docs",
+                                "description": "Indexed Mastra backend documentation",
+                                "mimeType": "application/json"
+                            }
+                        ]
+                    }
+                })
+            
+            else:
+                return web.json_response({
+                    "jsonrpc": "2.0",
+                    "id": data.get('id', 1),
+                    "error": {
+                        "code": -32601,
+                        "message": f"Method not found: {data.get('method')}"
+                    }
+                })
+                
+        except Exception as e:
+            logger.error(f"JSON-RPC handling error: {e}")
+            return web.json_response({
+                "jsonrpc": "2.0",
+                "id": data.get('id', 1),
+                "error": {
+                    "code": -32603,
+                    "message": str(e)
+                }
+            })
     
     async def sse_handler(self, request):
         """SSE handler for Claude Desktop MCP integration."""
@@ -314,7 +430,7 @@ class MCPWebServer:
                 await asyncio.sleep(30)  # Send heartbeat every 30 seconds
                 await self._send_sse_event(response, {
                     "type": "heartbeat",
-                    "timestamp": os.popen('date').read().strip()
+                    "timestamp": datetime.now().isoformat()
                 })
         except asyncio.CancelledError:
             pass
