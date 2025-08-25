@@ -58,7 +58,9 @@ class MCPWebServer:
             "status": "healthy",
             "service": "Cedar MCP Server",
             "version": "0.3.0",
-            "transports": ["http", "websocket", "sse"]
+            "transports": ["http", "websocket", "sse"],
+            "url": "https://mcpwithcedar-production.up.railway.app",
+            "sse_endpoint": "https://mcpwithcedar-production.up.railway.app/sse"
         })
     
     async def list_tools(self, request):
