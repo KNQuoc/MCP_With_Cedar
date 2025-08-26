@@ -49,6 +49,7 @@ class MCPWebServer:
         self.app.router.add_post('/register', self.register_handler)
         # JSON-RPC endpoint for Cursor
         self.app.router.add_post('/jsonrpc', self.jsonrpc_handler)
+        self.app.router.add_get('/jsonrpc', self.jsonrpc_handler)
     
     def setup_cors(self):
         """Setup CORS for web clients."""
