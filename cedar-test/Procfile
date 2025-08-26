@@ -1,1 +1,1 @@
-web: python -m cedar_mcp.web_server
+web: python web_server_fastapi.py

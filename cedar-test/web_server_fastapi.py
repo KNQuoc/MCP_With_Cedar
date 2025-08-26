@@ -318,9 +318,13 @@ async def handle_sse_post(request: Request):
     # Delegate to JSON-RPC handler
     return await handle_jsonrpc(request)
 
-if __name__ == "__main__":
+def main():
+    """Entry point for the FastAPI MCP server."""
     port = int(os.environ.get("PORT", 8000))
     host = "0.0.0.0"
     
     logger.info(f"Starting FastAPI MCP server on {host}:{port}")
     uvicorn.run(app, host=host, port=port)
+
+if __name__ == "__main__":
+    main()
