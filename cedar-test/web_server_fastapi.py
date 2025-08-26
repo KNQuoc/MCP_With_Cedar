@@ -142,9 +142,14 @@ async def handle_options():
 async def handle_jsonrpc(request: Request):
     """Handle JSON-RPC requests for MCP."""
     try:
+        # Log request details for debugging
+        logger.info(f"Request path: {request.url.path}")
+        logger.info(f"Request method: {request.method}")
+        logger.info(f"Request headers: {dict(request.headers)}")
+        
         # Get request body
         body = await request.body()
-        logger.info(f"Received request: {body[:500] if body else 'empty'}...")
+        logger.info(f"Request body: {body.decode('utf-8') if body else 'empty'}")
         
         if not body:
             return JSONResponse(
@@ -220,6 +225,14 @@ async def handle_jsonrpc(request: Request):
                 "jsonrpc": "2.0",
                 "id": request_id,
                 "result": {}
+            })
+        
+        elif method == "prompts/list":
+            logger.info("Processing prompts/list request")
+            return JSONResponse(content={
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "result": {"prompts": []}
             })
         
         elif method == "tools/list":
@@ -305,56 +318,77 @@ async def handle_jsonrpc(request: Request):
 @app.get("/mcp")
 @app.get("/jsonrpc")
 async def handle_get():
-    """Handle GET requests - return a notification for health check."""
-    logger.info("GET request received - returning server ready notification")
-    # Return a valid JSON-RPC notification (no id field)
+    """Handle GET requests - just acknowledge server is ready."""
+    logger.info("GET request received - health check")
+    # Return simple JSON (not JSON-RPC) for health check
     return JSONResponse(content={
-        "jsonrpc": "2.0",
-        "method": "server/ready",
-        "params": {
-            "status": "ready",
-            "serverInfo": {
-                "name": "cedar-mcp",
-                "version": "0.4.0"
-            }
-        }
+        "status": "ready",
+        "server": "cedar-mcp",
+        "version": "0.4.0",
+        "transport": "http"
     })
 
 @app.get("/sse")
 async def handle_sse():
-    """Handle SSE connections."""
+    """Handle SSE connections for MCP."""
     logger.info("SSE connection requested")
     
-    async def generate():
+    async def event_generator():
+        """Generate SSE events."""
         try:
-            # Send SSE comment to establish connection
-            yield ": SSE connection established\n\n"
-            # Send a heartbeat immediately
-            yield ": heartbeat\n\n"
+            # Send initial connection event
+            yield f": Connected to Cedar MCP Server via SSE\n\n"
             
-            # Don't keep the connection open indefinitely - Cursor will reconnect if needed
-            await asyncio.sleep(1)
-            yield ": ready\n\n"
+            # Send server capabilities as first event
+            server_info = {
+                "jsonrpc": "2.0",
+                "method": "server/initialized",
+                "params": {
+                    "serverInfo": {
+                        "name": "cedar-mcp",
+                        "version": "0.4.0"
+                    },
+                    "protocolVersion": "2024-11-05"
+                }
+            }
+            yield f"data: {json.dumps(server_info)}\n\n"
+            
+            # Keep connection alive with periodic heartbeats
+            heartbeat_count = 0
+            while heartbeat_count < 10:  # Limit to 10 heartbeats then close
+                await asyncio.sleep(5)
+                yield f": heartbeat {heartbeat_count}\n\n"
+                heartbeat_count += 1
+            
+            # Close after some time to prevent hanging connections
+            yield f": closing connection\n\n"
+            
+        except asyncio.CancelledError:
+            logger.info("SSE connection cancelled")
+            yield f": connection cancelled\n\n"
         except Exception as e:
             logger.error(f"SSE error: {e}")
+            error_msg = {"error": str(e)}
+            yield f"data: {json.dumps(error_msg)}\n\n"
     
     return StreamingResponse(
-        generate(),
+        event_generator(),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
             "Access-Control-Allow-Origin": "*",
-            "X-Accel-Buffering": "no",  # Disable proxy buffering
-            "Content-Type": "text/event-stream",  # Explicitly set content-type
-            "X-Content-Type-Options": "nosniff"
+            "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type, Accept",
+            "X-Accel-Buffering": "no",  # Disable nginx/proxy buffering
         }
     )
 
 @app.post("/sse")
 async def handle_sse_post(request: Request):
-    """Handle SSE POST requests."""
-    # Delegate to JSON-RPC handler
+    """Handle SSE POST requests - MCP over SSE."""
+    # For POST to SSE, treat it the same as JSON-RPC
+    # Cursor might send MCP requests here when using SSE transport
     return await handle_jsonrpc(request)
 
 def main():
