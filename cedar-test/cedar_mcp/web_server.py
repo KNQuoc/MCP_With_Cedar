@@ -290,12 +290,8 @@ class MCPWebServer:
             # Handle GET requests (health check only - initialization must be via POST)
             if request.method == 'GET':
                 logger.info("JSON-RPC GET request received - health check")
-                # Simple health check response - MCP init happens via POST
-                return web.Response(
-                    status=200,
-                    text='OK',
-                    content_type='text/plain'
-                )
+                # Return empty JSON object for health check
+                return web.json_response({})
             
             body = await request.read()
             logger.info(f"JSON-RPC POST received: {body[:200] if body else 'empty'}...")
