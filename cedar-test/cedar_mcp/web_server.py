@@ -452,12 +452,9 @@ class MCPWebServer:
     async def _send_sse_event(self, response, data):
         """Send an SSE event to the client."""
         try:
-            if response.transport and not response.transport.is_closing():
-                event_data = f"data: {json.dumps(data)}\n\n"
-                await response.write(event_data.encode('utf-8'))
-                await response.drain()  # Ensure data is sent
-            else:
-                logger.warning("Attempted to write to closed transport")
+            # StreamResponse doesn't have transport directly, just try to write
+            event_data = f"data: {json.dumps(data)}\n\n"
+            await response.write(event_data.encode('utf-8'))
         except ConnectionResetError:
             logger.info("Connection reset while sending SSE event")
             raise
@@ -589,16 +586,12 @@ class MCPWebServer:
             while True:
                 try:
                     await asyncio.sleep(heartbeat_interval)
-                    # Check if transport is still open before writing
-                    if response.transport and not response.transport.is_closing():
-                        await self._send_sse_event(response, {
-                            "type": "heartbeat",
-                            "timestamp": datetime.now().isoformat(),
-                            "sessionId": session_id
-                        })
-                    else:
-                        logger.info(f"Transport closed for session {session_id}")
-                        break
+                    # Try to send heartbeat
+                    await self._send_sse_event(response, {
+                        "type": "heartbeat",
+                        "timestamp": datetime.now().isoformat(),
+                        "sessionId": session_id
+                    })
                 except ConnectionResetError:
                     logger.info(f"Connection reset for session {session_id}")
                     break
