@@ -38,6 +38,15 @@ class MCPWebServer:
         # SSE endpoints for Claude Desktop
         self.app.router.add_get('/sse', self.sse_handler)
         self.app.router.add_post('/sse', self.sse_handler)  # Claude may use POST
+        # OAuth discovery endpoints (indicate no auth required)
+        self.app.router.add_get('/.well-known/oauth-protected-resource', self.oauth_discovery)
+        self.app.router.add_get('/.well-known/oauth-protected-resource/sse', self.oauth_discovery)
+        self.app.router.add_get('/.well-known/oauth-authorization-server', self.oauth_discovery)
+        self.app.router.add_get('/.well-known/oauth-authorization-server/sse', self.oauth_discovery)
+        self.app.router.add_get('/.well-known/openid-configuration', self.oauth_discovery)
+        self.app.router.add_get('/.well-known/openid-configuration/sse', self.oauth_discovery)
+        self.app.router.add_get('/sse/.well-known/openid-configuration', self.oauth_discovery)
+        self.app.router.add_post('/register', self.register_handler)
         # JSON-RPC endpoint for Cursor
         self.app.router.add_post('/jsonrpc', self.jsonrpc_handler)
     
@@ -128,6 +137,35 @@ class MCPWebServer:
         except Exception as exc:
             logger.exception("Tool execution error: %s", exc)
             return [types.TextContent(type="text", text=json.dumps({"error": str(exc)}))]
+    
+    async def oauth_discovery(self, request):
+        """OAuth discovery endpoint - indicates no auth required."""
+        return web.json_response({
+            "issuer": "https://mcpwithcedar-production.up.railway.app",
+            "authorization_endpoint": None,
+            "token_endpoint": None,
+            "userinfo_endpoint": None,
+            "registration_endpoint": "https://mcpwithcedar-production.up.railway.app/register",
+            "authentication_required": False,
+            "grant_types_supported": ["none"],
+            "response_types_supported": ["none"],
+            "description": "No authentication required - public MCP server"
+        })
+    
+    async def register_handler(self, request):
+        """Registration endpoint - auto-approves all registrations."""
+        # Generate a dummy client ID for the requester
+        client_id = str(uuid.uuid4())
+        
+        return web.json_response({
+            "client_id": client_id,
+            "client_secret": "not_required",
+            "registration_access_token": "not_required",
+            "token_endpoint_auth_method": "none",
+            "grant_types": ["none"],
+            "response_types": ["none"],
+            "description": "Auto-registered client - no authentication required"
+        })
     
     async def health_check(self, request):
         """Health check endpoint for Railway."""
@@ -413,8 +451,20 @@ class MCPWebServer:
     
     async def _send_sse_event(self, response, data):
         """Send an SSE event to the client."""
-        event_data = f"data: {json.dumps(data)}\n\n"
-        await response.write(event_data.encode('utf-8'))
+        try:
+            if response.transport and not response.transport.is_closing():
+                event_data = f"data: {json.dumps(data)}\n\n"
+                await response.write(event_data.encode('utf-8'))
+                await response.drain()  # Ensure data is sent
+            else:
+                logger.warning("Attempted to write to closed transport")
+        except ConnectionResetError:
+            logger.info("Connection reset while sending SSE event")
+            raise
+        except Exception as e:
+            if "Cannot write to closing transport" not in str(e):
+                logger.error(f"Error sending SSE event: {e}")
+            raise
     
     async def _handle_sse_post(self, request, response):
         """Handle SSE requests via POST (Claude Desktop style)."""
@@ -535,17 +585,33 @@ class MCPWebServer:
         """Handle SSE stream for keep-alive and periodic updates."""
         try:
             # Send periodic heartbeat to keep connection alive
+            heartbeat_interval = 15  # Send heartbeat every 15 seconds (more frequent)
             while True:
-                await asyncio.sleep(30)  # Send heartbeat every 30 seconds
-                await self._send_sse_event(response, {
-                    "type": "heartbeat",
-                    "timestamp": datetime.now().isoformat(),
-                    "sessionId": session_id
-                })
+                try:
+                    await asyncio.sleep(heartbeat_interval)
+                    # Check if transport is still open before writing
+                    if response.transport and not response.transport.is_closing():
+                        await self._send_sse_event(response, {
+                            "type": "heartbeat",
+                            "timestamp": datetime.now().isoformat(),
+                            "sessionId": session_id
+                        })
+                    else:
+                        logger.info(f"Transport closed for session {session_id}")
+                        break
+                except ConnectionResetError:
+                    logger.info(f"Connection reset for session {session_id}")
+                    break
+                except Exception as e:
+                    if "Cannot write to closing transport" in str(e):
+                        logger.info(f"Client disconnected for session {session_id}")
+                    else:
+                        logger.error(f"Heartbeat error for session {session_id}: {e}")
+                    break
         except asyncio.CancelledError:
-            pass
+            logger.info(f"SSE stream cancelled for session {session_id}")
         except Exception as e:
-            logger.error(f"SSE stream error: {e}")
+            logger.error(f"SSE stream error for session {session_id}: {e}")
     
     def run(self, host='0.0.0.0', port=None):
         """Run the web server."""
