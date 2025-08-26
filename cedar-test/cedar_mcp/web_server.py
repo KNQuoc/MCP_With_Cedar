@@ -416,12 +416,19 @@ class MCPWebServer:
             })
     
     async def sse_handler(self, request):
-        """SSE handler for Claude Desktop MCP integration."""
+        """SSE handler for Cursor MCP integration."""
+        if request.method == 'POST':
+            # Handle MCP messages sent via POST to SSE endpoint
+            return await self._handle_sse_post_message(request)
+        
+        # Handle GET request for SSE connection establishment
         response = StreamResponse()
         response.headers['Content-Type'] = 'text/event-stream'
         response.headers['Cache-Control'] = 'no-cache'
         response.headers['Connection'] = 'keep-alive'
         response.headers['Access-Control-Allow-Origin'] = '*'
+        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
         response.headers['X-Accel-Buffering'] = 'no'  # Disable nginx buffering
         
         await response.prepare(request)
@@ -430,14 +437,21 @@ class MCPWebServer:
         session_id = str(uuid.uuid4())
         self.sse_sessions[session_id] = {
             'response': response,
-            'cwd': request.headers.get('X-CWD', os.getcwd())
+            'cwd': request.headers.get('X-CWD', os.getcwd()),
+            'initialized': False
         }
         
-        logger.info(f"SSE connection established: {session_id}, CWD: {self.sse_sessions[session_id]['cwd']}")
+        logger.info(f"SSE connection established: {session_id}")
         
         try:
-            # Don't send anything initially - wait for client to send initialize request
-            # Just keep the connection alive
+            # Send initial MCP server advertisement
+            await self._send_sse_event(response, {
+                "jsonrpc": "2.0",
+                "method": "notifications/initialized",
+                "params": {}
+            })
+            
+            # Keep connection alive and handle any incoming messages
             await self._handle_sse_stream(request, response, session_id)
                 
         except Exception as e:
@@ -465,6 +479,123 @@ class MCPWebServer:
                 logger.error(f"Error sending SSE event: {e}")
             raise
     
+    async def _handle_sse_post_message(self, request):
+        """Handle MCP messages sent via POST to SSE endpoint (Cursor style)."""
+        try:
+            body = await request.read()
+            logger.info(f"SSE POST message received: {body[:200]}...")
+            
+            if not body:
+                return web.json_response({
+                    "jsonrpc": "2.0",
+                    "error": {"code": -32600, "message": "Empty request body"}
+                }, status=400)
+            
+            try:
+                data = json.loads(body)
+            except json.JSONDecodeError as e:
+                logger.warning(f"Failed to parse JSON from SSE POST: {e}")
+                return web.json_response({
+                    "jsonrpc": "2.0",
+                    "error": {"code": -32700, "message": "Parse error"}
+                }, status=400)
+            
+            # Handle MCP protocol messages
+            if data.get('method') == 'initialize':
+                logger.info("Processing MCP initialize request")
+                return web.json_response({
+                    "jsonrpc": "2.0",
+                    "id": data.get('id', 1),
+                    "result": {
+                        "protocolVersion": "0.1.0",
+                        "capabilities": {
+                            "tools": {
+                                "listChanged": False
+                            },
+                            "resources": {}
+                        },
+                        "serverInfo": {
+                            "name": "cedar-mcp",
+                            "version": "0.3.0"
+                        }
+                    }
+                })
+            
+            elif data.get('method') == 'tools/list':
+                logger.info("Processing tools/list request")
+                tools = []
+                for name, handler in self.mcp_server.tool_handlers.items():
+                    if hasattr(handler, 'list_tool'):
+                        tool = handler.list_tool()
+                        tools.append({
+                            "name": tool.name,
+                            "description": tool.description,
+                            "inputSchema": tool.inputSchema
+                        })
+                
+                return web.json_response({
+                    "jsonrpc": "2.0",
+                    "id": data.get('id', 1),
+                    "result": {"tools": tools}
+                })
+            
+            elif data.get('method') == 'tools/call':
+                logger.info(f"Processing tools/call request for {data.get('params', {}).get('name')}")
+                params = data.get('params', {})
+                tool_name = params.get('name')
+                arguments = params.get('arguments', {})
+                
+                if not tool_name:
+                    return web.json_response({
+                        "jsonrpc": "2.0",
+                        "id": data.get('id', 1),
+                        "error": {"code": -32602, "message": "Missing tool name"}
+                    })
+                
+                handler = self.mcp_server.tool_handlers.get(tool_name)
+                if not handler:
+                    return web.json_response({
+                        "jsonrpc": "2.0",
+                        "id": data.get('id', 1),
+                        "error": {"code": -32601, "message": f"Unknown tool: {tool_name}"}
+                    })
+                
+                try:
+                    result = await self._call_tool_with_server_logic(tool_name, arguments)
+                    formatted_result = []
+                    for r in result:
+                        if hasattr(r, 'text'):
+                            formatted_result.append({"type": "text", "text": r.text})
+                        else:
+                            formatted_result.append({"type": "text", "text": str(r)})
+                    
+                    return web.json_response({
+                        "jsonrpc": "2.0",
+                        "id": data.get('id', 1),
+                        "result": {"content": formatted_result}
+                    })
+                except Exception as e:
+                    logger.error(f"Tool execution error: {e}")
+                    return web.json_response({
+                        "jsonrpc": "2.0",
+                        "id": data.get('id', 1),
+                        "error": {"code": -32603, "message": str(e)}
+                    })
+            
+            else:
+                return web.json_response({
+                    "jsonrpc": "2.0",
+                    "id": data.get('id', 1),
+                    "error": {"code": -32601, "message": f"Method not found: {data.get('method')}"}
+                })
+        
+        except Exception as e:
+            logger.error(f"SSE POST handling error: {e}")
+            return web.json_response({
+                "jsonrpc": "2.0",
+                "error": {"code": -32603, "message": str(e)}
+            }, status=500)
+
     async def _handle_sse_post(self, request, response):
         """Handle SSE requests via POST (Claude Desktop style)."""
         try:
