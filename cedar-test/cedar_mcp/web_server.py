@@ -413,34 +413,13 @@ class MCPWebServer:
         logger.info(f"SSE connection established: {session_id}, CWD: {self.sse_sessions[session_id]['cwd']}")
         
         try:
-            # Send initial capabilities immediately for MCP handshake
-            await self._send_sse_event(response, {
-                "jsonrpc": "2.0",
-                "method": "initialized",
-                "params": {
-                    "protocolVersion": "0.1.0",
-                    "capabilities": {
-                        "tools": True,
-                        "resources": False,
-                        "prompts": False,
-                        "sampling": False
-                    },
-                    "serverInfo": {
-                        "name": "cedar-mcp",
-                        "version": "0.3.0"
-                    }
-                }
-            })
-            
-            # Handle incoming messages via query params or POST body
-            if request.method == 'POST':
-                await self._handle_sse_post(request, response)
-            else:
-                # Keep connection alive and handle messages
-                await self._handle_sse_stream(request, response, session_id)
+            # Don't send anything initially - wait for client to send initialize request
+            # Just keep the connection alive
+            await self._handle_sse_stream(request, response, session_id)
                 
         except Exception as e:
-            logger.error(f"SSE error: {e}", exc_info=True)
+            if "Cannot write to closing transport" not in str(e):
+                logger.error(f"SSE error: {e}", exc_info=True)
         finally:
             # Clean up session
             if session_id in self.sse_sessions:
@@ -581,17 +560,19 @@ class MCPWebServer:
     async def _handle_sse_stream(self, request, response, session_id):
         """Handle SSE stream for keep-alive and periodic updates."""
         try:
+            # Wait a bit before starting heartbeats
+            await asyncio.sleep(2)
+            
+            # Send initial comment to establish connection
+            await response.write(b": keepalive\n\n")
+            
             # Send periodic heartbeat to keep connection alive
-            heartbeat_interval = 15  # Send heartbeat every 15 seconds (more frequent)
+            heartbeat_interval = 30  # Send heartbeat every 30 seconds
             while True:
                 try:
                     await asyncio.sleep(heartbeat_interval)
-                    # Try to send heartbeat
-                    await self._send_sse_event(response, {
-                        "type": "heartbeat",
-                        "timestamp": datetime.now().isoformat(),
-                        "sessionId": session_id
-                    })
+                    # Send a comment line as heartbeat (SSE comment format)
+                    await response.write(b": heartbeat\n\n")
                 except ConnectionResetError:
                     logger.info(f"Connection reset for session {session_id}")
                     break
