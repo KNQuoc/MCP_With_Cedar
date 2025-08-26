@@ -16,12 +16,14 @@ class VoiceSpecialistTool:
     
     # Core voice-related search terms for documentation
     VOICE_SEARCH_TERMS = {
-        "components": ["VoiceIndicator", "VoiceButton", "VoiceSettings", "VoiceStatusPanel", "VoiceWaveform", "ChatInput"],
-        "features": ["voice", "microphone", "audio", "recording", "transcription", "speech", "whisper", "realtime"],
+        "components": ["VoiceIndicator", "VoiceButton", "VoiceSettings", "VoiceStatusPanel", "VoiceWaveform", "ChatInput", "FloatingCedarChat"],
+        "features": ["voice", "microphone", "audio", "recording", "transcription", "speech", "whisper", "realtime", "voice-execute"],
         "states": ["isListening", "isSpeaking", "voicePermissionStatus", "voiceError", "transcription"],
         "methods": ["toggleVoice", "startListening", "stopListening", "requestMicrophonePermission", "updateVoiceSettings"],
         "permissions": ["granted", "denied", "not-supported", "prompt"],
-        "integration": ["WebRTC", "OpenAI", "TTS", "STT", "WebSocket", "voice endpoint"]
+        "integration": ["WebRTC", "OpenAI", "TTS", "STT", "WebSocket", "voice endpoint", "baseURL", "voiceRoute"],
+        "providers": ["OpenAI Voice", "PlayAI Voice", "CompositeVoice", "Mastra Agent Voice"],
+        "api": ["voice.speak", "voice.listen", "audio stream", "createReadStream", "createWriteStream"]
     }
     
     # High-level guidance categories
@@ -283,15 +285,15 @@ class VoiceSpecialistTool:
         if "permission" in query_lower:
             return "Voice features require microphone permissions. Cedar handles this automatically in ChatInput, but you can also manage permissions manually with requestMicrophonePermission()."
         elif "not working" in query_lower or "error" in query_lower:
-            return "Check browser console for errors, verify HTTPS is used, ensure OpenAI API key is configured, and confirm microphone permissions are granted."
+            return "Check browser console for errors, verify HTTPS is used, ensure OpenAI API key is configured, and confirm microphone permissions are granted. For Mastra agents, check voice provider initialization."
         elif "setup" in query_lower or "install" in query_lower:
-            return "Use 'npx cedar-os-cli plant-seed' to set up Cedar with voice features. Voice works automatically in ChatInput component."
+            return "Use 'npx cedar-os-cli plant-seed' to set up Cedar with voice features. Voice works automatically in ChatInput component. For Mastra agents, configure voice providers."
         elif focus == "components":
-            return "Cedar provides VoiceIndicator for visual feedback, VoiceButton for controls, and ChatInput with built-in voice. Search docs for specific component examples."
+            return "Cedar provides VoiceIndicator for visual feedback, VoiceButton for controls, and ChatInput with built-in voice. Components are in src/components/cedar-os/. Search docs for specific component examples."
         elif focus == "integration":
-            return "Voice requires OpenAI API key for transcription (Whisper) and TTS. Configure endpoint for real-time WebRTC voice if needed."
+            return "Voice requires OpenAI API key for transcription (Whisper) and TTS. Configure voiceRoute with baseURL for custom endpoints. For Mastra, use OpenAIVoice, PlayAIVoice, or CompositeVoice."
         else:
-            return "Cedar's voice features include automatic transcription, TTS, visual indicators, and keyboard shortcuts. Search documentation for specific implementation details."
+            return "Cedar's voice features include automatic transcription, TTS, visual indicators, and keyboard shortcuts. Mastra agents support voice with multiple providers. Search documentation for specific implementation details."
     
     def _suggest_related_topics(self, query: str, focus: str) -> List[str]:
         """Suggest related topics to explore"""

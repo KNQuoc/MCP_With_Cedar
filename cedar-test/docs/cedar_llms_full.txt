@@ -1,5 +1,5 @@
 Source: https://docs.cedarcopilot.com/llms-full.txt
-Fetched: 2025-08-24T19:48:33.625904+00:00
+Fetched: 2025-08-26T02:04:56.534415+00:00
 ETag: None
 Last-Modified: None
 # Agent Backend Connection
@@ -244,7 +244,7 @@ export interface LLMResponse {
   <Accordion title="Reserved object shapes in the Cedar chat">
     When returning structured data in the `object` field of `LLMResponse`, objects with a `type` field have special meanings in Cedar-OS:
 
-    **`type: "action"`** - Defers to frontend action execution (state manipulation)
+    **`type: "setState"`** - Defers to frontend setState execution (state manipulation)
 
     * Learn more: [Agentic State Access](/state-access/agentic-state-access)
 
@@ -1226,14 +1226,23 @@ Before making any call to your agent backend, Cedar automatically assembles all 
       "todos": [
         { "id": "1", "title": "Fix login bug", "completed": false }
       ],
-      "setters": {
-        "addTodo": {
-          "name": "addTodo",
-          "stateKey": "todos",
-          "description": "Add a new todo item",
-          "parameters": ["title: string"]
-        }
-      }
+        	"setters": {
+    			"addTodo": {
+    			"name": "addTodo",
+    			"stateKey": "todos",
+    			"description": "Add a new todo item",
+    			"schema": {
+    				"type": "object",
+    				"properties": {
+    				"title": {
+    					"type": "string",
+    					"description": "The title of the todo item"
+    				}
+    				},
+    				"required": ["title"]
+    			}
+    			}
+          }
     }
     ```
   </Step>
@@ -1673,27 +1682,27 @@ const messageResponseProcessor = {
 };
 ```
 
-### `"action"` Type
+### `"setState"` Type
 
-* **Behavior**: Executes state actions via custom setters and adds action message to chat
+* **Behavior**: Executes state actions via custom setters and adds setState message to chat
 * **Properties**: `stateKey: string`, `setterKey: string`, `args?: unknown[]`
-* **Default Processor**: `actionResponseProcessor` executes state actions and adds to chat
+* **Default Processor**: `setStateResponseProcessor` executes state actions and adds to chat
 
 ```tsx
-// Default actionResponseProcessor implementation
-const actionResponseProcessor = {
-	type: 'action',
+// Default setStateResponseProcessor implementation
+const setStateResponseProcessor = {
+	type: 'setState',
 	namespace: 'default',
 	execute: async (obj, store) => {
 		// Execute the state action
 		const args = Array.isArray(obj.args) ? obj.args : [];
 		store.executeCustomSetter(obj.stateKey, obj.setterKey, ...args);
 
-		// Add action message to chat
+		// Add setState message to chat
 		store.addMessage(obj as unknown as MessageInput);
 	},
-	validate: (obj): obj is ActionResponse =>
-		obj.type === 'action' &&
+	validate: (obj): obj is SetStateResponse =>
+		obj.type === 'setState' &&
 		'stateKey' in obj &&
 		'setterKey' in obj &&
 		typeof obj.stateKey === 'string' &&
@@ -1701,21 +1710,21 @@ const actionResponseProcessor = {
 };
 ```
 
-**Action Factory Functions**: Cedar provides special factory functions for action responses:
+**SetState Factory Functions**: Cedar provides special factory functions for setState responses:
 
 ```tsx
-import { createActionResponseProcessor, ActionResponseFor } from 'cedar-os';
+import { createSetStateResponseProcessor, SetStateResponseFor } from 'cedar-os';
 
-// Specific action response type using helper
-type UpdateCounterResponse = ActionResponseFor<
+// Specific setState response type using helper
+type UpdateCounterResponse = SetStateResponseFor<
 	'counter', // StateKey
 	'increment', // SetterKey
 	[number] // Args
 >;
 
-// Create custom action processor with filtering
-const CounterActionProcessor =
-	createActionResponseProcessor<UpdateCounterResponse>({
+// Create custom setState processor with filtering
+const CounterSetStateProcessor =
+	createSetStateResponseProcessor<UpdateCounterResponse>({
 		namespace: 'counter',
 		setterKey: 'increment', // Only handle increment actions
 		execute: (obj, store) => {
@@ -1929,6 +1938,33 @@ The recommended deployment setup is:
 
 * Clone & run the [cedar-mastra-starter](https://github.com/CedarCopilot/cedar-mastra-starter) to see everything in action.
 * Explore the official Mastra docs for further customisation.
+
+
+# Advanced Context Management
+Source: https://docs.cedarcopilot.com/agent-input-context/advanced-context-management
+
+Handle complex state serialization and circular dependencies
+
+## Handling Circular Dependencies with sanitiseJson
+
+Cedar automatically applies `sanitiseJson` to your state when sending it as agent context, which intelligently handles circular dependencies by replacing them with reference paths (e.g., `"$ref:$.parent.child"`). If your backend has access to Cedar utilities, you can use `desanitiseJson` to restore the original object structure with all circular references intact.
+
+For cases where you need precise control over the JSON structure being sent, pre-stringify your state before adding it to the context. This bypasses automatic sanitization, ensuring the exact shape you define is transmitted to your agent backend. This approach is particularly useful when working with backends that don't support reference resolution or when you need to maintain specific data formats.
+
+```tsx
+useSubscribeStateToInputContext<typeof Data>(
+	'dashboard-data',
+	(state) => {
+		console.log('dashboard-data', state);
+		return {
+			Data: Flatten.stringify(state),
+		};
+	},
+	{
+		labelField: 'title',
+	}
+);
+```
 
 
 # Agent Input Context
@@ -3242,34 +3278,202 @@ When no `labelField` is specified, the function looks for labels in this order:
 4. `id` field
 5. String representation of the value
 
-## How It Works Automatically
+When using `useSubscribeInputContext`, entries are automatically marked with `source: 'subscription'`.
 
-When you use `useSubscribeInputContext`, here's what happens automatically:
+## Output Behavior and Structure
 
-1. **State Monitoring**: The function uses React's `useEffect` to monitor changes to your `localState`
-2. **Context Mapping**: When state changes, your `mapFn` transforms the state into context entries
-3. **Store Update**: The mapped context is automatically added to Cedar's internal store
-4. **Agent Access**: When the user sends a message, the agent receives this context along with the message
+### What Gets Sent to the Agent
 
-### Context Structure
+When the agent receives context from `useSubscribeStateToInputContext`, it gets a simplified structure containing only the essential data:
 
-The context entries follow this structure:
-
-```typescript
-interface ContextEntry {
-	id: string;
-	source: 'mention' | 'subscription' | 'manual';
-	data: any;
-	metadata?: {
-		label?: string;
-		icon?: ReactNode;
-		color?: string;
-		[key: string]: any;
-	};
+```json
+{
+	"contextKey": {
+		"source": "subscription",
+		"data": {
+			/* your actual data */
+		}
+	}
 }
 ```
 
-When using `useSubscribeInputContext`, entries are automatically marked with `source: 'subscription'`.
+<Info>
+  The agent only receives the `source` and `data` fields. Visual metadata like
+  `icon`, `color`, and `label` are used only for UI display and are not sent to
+  the agent.
+</Info>
+
+### Array Behavior
+
+The output structure depends on how you pass data to `useSubscribeStateToInputContext`:
+
+<Tabs>
+  <Tab title="Single Value → Single Entry">
+    When your `mapFn` returns a single non-array value, it's stored as a single context entry:
+
+    ```tsx
+    // Input: Single object
+    useSubscribeStateToInputContext('user', (userData) => ({
+      currentUser: userData, // Single object
+    }));
+
+    // Agent receives:
+    {
+      "currentUser": {
+        "source": "subscription",
+        "data": { "id": "123", "name": "John Doe" }
+      }
+    }
+    ```
+  </Tab>
+
+  <Tab title="Array → Array of Entries">
+    When your `mapFn` returns an array, it's preserved as an array of context entries:
+
+    ```tsx
+    // Input: Array
+    useSubscribeStateToInputContext('todos', (todoList) => ({
+      todos: todoList, // Array of todos
+    }));
+
+    // Agent receives:
+    {
+      "todos": [
+        { "source": "subscription", "data": { "id": 1, "text": "Buy groceries" }},
+        { "source": "subscription", "data": { "id": 2, "text": "Walk dog" }}
+      ]
+    }
+    ```
+  </Tab>
+
+  <Tab title="Single-Item Array → Array">
+    Even single-item arrays are preserved as arrays:
+
+    ```tsx
+    // Input: Array with one item
+    useSubscribeStateToInputContext('selected', (selection) => ({
+      selectedItems: [selection[0]], // Single-item array
+    }));
+
+    // Agent receives:
+    {
+      "selectedItems": [
+        { "source": "subscription", "data": { "id": "item1", "title": "Selected Item" }}
+      ]
+    }
+    ```
+  </Tab>
+</Tabs>
+
+### Practical Examples
+
+Here are real-world examples showing the input and output:
+
+<CodeGroup>
+  ```tsx React Component
+  // Example 1: User profile (single value)
+  const [user] = useState({ id: '123', name: 'Alice', role: 'admin' });
+
+  useSubscribeStateToInputContext('user', (userData) => ({
+  currentUser: userData, // Single object
+  }), { labelField: 'name' });
+
+  ```
+
+  ```json Agent Context
+  {
+    "currentUser": {
+      "source": "subscription",
+      "data": {
+        "id": "123",
+        "name": "Alice",
+        "role": "admin"
+      }
+    }
+  }
+  ```
+</CodeGroup>
+
+<CodeGroup>
+  ```tsx React Component  
+  // Example 2: Shopping cart (array)
+  const [cart] = useState([
+    { id: 'p1', name: 'Laptop', price: 999 },
+    { id: 'p2', name: 'Mouse', price: 29 }
+  ]);
+
+  useSubscribeStateToInputContext('cart', (items) => ({
+  cartItems: items, // Array
+  }), { labelField: 'name' });
+
+  ```
+
+  ```json Agent Context
+  {
+    "cartItems": [
+      {
+        "source": "subscription",
+        "data": { "id": "p1", "name": "Laptop", "price": 999 }
+      },
+      {
+        "source": "subscription",
+        "data": { "id": "p2", "name": "Mouse", "price": 29 }
+      }
+    ]
+  }
+  ```
+</CodeGroup>
+
+<CodeGroup>
+  ```tsx React Component
+  // Example 3: Single selected item (preserved as array)
+  const [selected] = useState([
+    { id: 'node1', title: 'Important Feature', status: 'planned' }
+  ]);
+
+  useSubscribeStateToInputContext('selection', (nodes) => ({
+  selectedNodes: nodes, // Single-item array
+  }), { labelField: 'title' });
+
+  ```
+
+  ```json Agent Context
+  {
+    "selectedNodes": [
+      {
+        "source": "subscription",
+        "data": {
+          "id": "node1",
+          "title": "Important Feature",
+          "status": "planned"
+        }
+      }
+    ]
+  }
+  ```
+</CodeGroup>
+
+<Tip>
+  **Why preserve array structure?** This allows the agent to understand whether
+  you're working with a single item or a collection, even when that collection
+  has only one item. This distinction can be important for generating
+  appropriate responses.
+</Tip>
+
+### Multiple Context Keys
+
+When you return multiple keys from your `mapFn`, each follows the same behavior rules:
+
+```tsx
+useSubscribeStateToInputContext('appState', (state) => ({
+	currentUser: state.user, // Single object → single entry
+	activeTasks: state.tasks, // Array → array of entries
+	selectedItems: [state.selected], // Single-item array → array
+	preferences: state.prefs, // Single object → single entry
+}));
+
+// Agent receives all four keys with appropriate structures
+```
 
 ## Multiple State Subscriptions
 
@@ -4305,34 +4509,35 @@ Cedar automatically handles these message types with default behavior. Each type
 * **Renderer**: Built-in text message renderer with role-based styling
 * **Warning**: Overriding this type will disable default text message rendering
 
-### `"action"` Type
+### `"setState"` Type
 
 * **Behavior**: Executes state actions and displays completion status
 * **Properties**: `stateKey: string`, `setterKey: string`, `args?: unknown[]`
-* **Default Renderer**: `ActionRenderer` shows action completion with shimmer effects
+* **Default Renderer**: `SetStateRenderer` shows setState completion with shimmer effects
 
-**Action Factory Functions**: Cedar provides special factory functions for action messages:
+**SetState Factory Functions**: Cedar provides special factory functions for setState messages:
 
 ```tsx
-import { createActionMessageRenderer, ActionMessageFor } from 'cedar-os';
+import { createSetStateMessageRenderer, SetStateMessageFor } from 'cedar-os';
 
-// Specific action message type using helper
-type UpdateCounterAction = ActionMessageFor<
+// Specific setState message type using helper
+type UpdateCounterSetState = SetStateMessageFor<
 	'counter', // StateKey
 	'increment', // SetterKey
 	[number] // Args
 >;
 
-// Create custom action renderer with filtering
-const CounterActionRenderer = createActionMessageRenderer<UpdateCounterAction>({
-	namespace: 'counter',
-	setterKey: 'increment', // Only handle increment actions
-	render: (message) => (
-		<div className='action-message'>
-			✅ Incremented counter by {message.args?.[0] || 1}
-		</div>
-	),
-});
+// Create custom setState renderer with filtering
+const CounterSetStateRenderer =
+	createSetStateMessageRenderer<UpdateCounterSetState>({
+		namespace: 'counter',
+		setterKey: 'increment', // Only handle increment actions
+		render: (message) => (
+			<div className='setState-message'>
+				✅ Incremented counter by {message.args?.[0] || 1}
+			</div>
+		),
+	});
 ```
 
 ### `"progress_update"` Type
@@ -4919,7 +5124,10 @@ Enable real-time streaming responses in chat components
 Cedar enables streaming responses by default in your chat interface. Responses appear in real-time as they're generated. You can disable streaming by setting the `stream` prop to `false` on any chat component or ChatInput.
 
 <Info>
-  **Partial Object Streaming Not Supported**: Cedar currently doesn't support partial object streaming. For structured data to be handled via Cedar's automatic handlers, only complete objects should be streamed or streaming should be turned off.
+  **Partial Object Streaming Not Supported**: Cedar currently doesn't support
+  partial object streaming. For structured data to be handled via Cedar's
+  automatic handlers, only complete objects should be streamed or streaming
+  should be turned off.
 </Info>
 
 ## Quick Start
@@ -5003,7 +5211,7 @@ When streaming is enabled:
     **JSON objects for structured data or tool outputs**
 
     ```
-    → data: {"type":"action","command":"search","query":"nearest cafe"}
+    → data: {"type":"setState","command":"search","query":"nearest cafe"}
     ```
 
     Our client handlers will parse each `data:` line as it arrives and handle parsed text or JSON accordingly. This enables real-time, mixed-format updates with minimal overhead.
@@ -6323,6 +6531,7 @@ Cedar-OS is an open-source framework for building AI-native applications. This g
       ```tsx State Access
       import { useRegisterState } from 'cedar-os';
       import { useState } from 'react';
+      import { z } from 'zod';
 
       function TodoApp() {
         const [todos, setTodos] = useState([]);
@@ -6336,9 +6545,9 @@ Cedar-OS is an open-source framework for building AI-native applications. This g
               addTodo: {
                 name: 'addTodo',
                 description: 'Add a new todo item',
-                parameters: [
-                  { name: 'text', type: 'string', description: 'Todo text' }
-                ],
+                schema: z.object({
+                  text: z.string().describe('Todo text')
+                }),
                 execute: (currentTodos, text) => {
                   setTodos([...currentTodos, {
                     id: Date.now(),
@@ -6350,9 +6559,9 @@ Cedar-OS is an open-source framework for building AI-native applications. This g
               toggleTodo: {
                 name: 'toggleTodo',
                 description: 'Toggle todo completion status',
-                parameters: [
-                  { name: 'id', type: 'number', description: 'Todo ID' }
-                ],
+                schema: z.object({
+                  id: z.number().describe('Todo ID')
+                }),
                 execute: (currentTodos, id) => {
                   setTodos(currentTodos.map(t =>
                     t.id === id ? { ...t, completed: !t.completed } : t
@@ -6875,7 +7084,7 @@ When the LLM returns a response, it gets passed to `handleLLMResponse()` which p
 The system uses a switch-like mechanism through `processStructuredResponse()` that looks at the `type` field of structured responses and routes them to registered response processors:
 
 * **`message` type** - Handled by `messageResponseProcessor`, converts backend message format to chat messages
-* **`action` type** - Handled by `actionResponseProcessor`, executes state mutations through `executeCustomSetter()`
+* **`setState` type** - Handled by `setStateResponseProcessor`, executes state mutations through `executeCustomSetter()`
 * **`progress_update` type** - Shows loading states and progress indicators
 
 **3. Adding to chat through `messagesSlice`**
@@ -6884,7 +7093,7 @@ Text content and processed messages get added to the chat history via `addMessag
 
 **4. State mutations through registered setters**
 
-For `action` type responses, the system calls `executeCustomSetter()` which uses the parameters from `registerState()` to execute the appropriate custom setter function, allowing the AI to modify application state based on the registered schema and available setters.
+For `setState` type responses, the system calls `executeCustomSetter()` which uses the parameters from `registerState()` to execute the appropriate custom setter function, allowing the AI to modify application state based on the registered schema and available setters.
 
 ***
 
@@ -6894,7 +7103,7 @@ Response processors handle different types of structured AI responses:
 
 ### Built-in Processors
 
-1. **ActionResponseProcessor** - Executes state mutations
+1. **SetStateResponseProcessor** - Executes state mutations
 2. **MessageResponseProcessor** - Adds text messages to chat
 3. **ProgressUpdateResponseProcessor** - Handles loading states
 
@@ -6942,10 +7151,9 @@ Open your Cursor settings file (`~/.cursor/settings.json`) and add:
 ```json
 {
   "mcpServers": {
-    "cedar": {
-      "command": "npx",
-      "args": ["@cedar/mcp-server"],
-      "env": {}
+    "cedar-mcp": {
+      "url": "https://mcpwithcedar-production.up.railway.app/jsonrpc",
+      "description": "Cedar-OS Expert MCP Server"
     }
   }
 }
@@ -7101,7 +7309,7 @@ The MCP server understands:
 
 * [Cedar Discord Community](https://discord.gg/4AWawRjNdZ)
 * [GitHub Issues](https://github.com/CedarCopilot/cedar-OS/issues)
-* [Cedar Documentation](https://docs.cedar.ai)
+* [Cedar Documentation](https://docs.cedarcopilot.com)
 
 
 # Creating Custom Spells
@@ -10401,6 +10609,7 @@ First, register your state with custom setters that define the available actions
 ```tsx
 import { useRegisterState } from 'cedar-os';
 import { Node } from 'reactflow';
+import { z } from 'zod';
 
 // Register nodes state with custom setters
 useRegisterState({
@@ -10412,13 +10621,16 @@ useRegisterState({
 		addNode: {
 			name: 'addNode',
 			description: 'Add a new node to the roadmap',
-			parameters: [
-				{
-					name: 'node',
-					type: 'Node<FeatureNodeData>',
-					description: 'The node to add',
-				},
-			],
+			schema: z.object({
+				node: z.object({
+					data: z.object({
+						title: z.string(),
+						description: z.string(),
+						status: z.enum(['done', 'planned', 'backlog', 'in progress']),
+						nodeType: z.literal('feature').default('feature'),
+					}),
+				}),
+			}),
 			execute: (currentNodes, node) => {
 				const newNode = {
 					...node,
@@ -10440,13 +10652,9 @@ useRegisterState({
 		removeNode: {
 			name: 'removeNode',
 			description: 'Remove a node from the roadmap',
-			parameters: [
-				{
-					name: 'id',
-					type: 'string',
-					description: 'The ID of the node to remove',
-				},
-			],
+			schema: z.object({
+				id: z.string().describe('The ID of the node to remove'),
+			}),
 			execute: async (currentNodes, id) => {
 				// Mark as removed with diff instead of immediate deletion
 				setNodes(
@@ -10461,7 +10669,7 @@ useRegisterState({
 		acceptAllDiffs: {
 			name: 'acceptAllDiffs',
 			description: 'Accept all pending diffs',
-			parameters: [],
+			schema: z.object({}),
 			execute: async (currentNodes) => {
 				const nodesWithDiffs = currentNodes.filter((n) => n.data.diff);
 
@@ -10509,7 +10717,7 @@ export const addFeatureTool = createTool({
 		nodeType: z.literal('feature').default('feature'),
 	}),
 	outputSchema: z.object({
-		type: z.literal('action'),
+		type: z.literal('setState'),
 		stateKey: z.literal('nodes'),
 		setterKey: z.literal('addNode'),
 		args: z.array(z.any()),
@@ -10517,7 +10725,7 @@ export const addFeatureTool = createTool({
 	execute: async ({ context }) => {
 		// Return structured response for Cedar to interpret
 		return {
-			type: 'action',
+			type: 'setState',
 			stateKey: 'nodes',
 			setterKey: 'addNode',
 			args: [
@@ -10548,8 +10756,8 @@ handleLLMResult: (response: LLMResponse) => {
 	if (response.object && typeof response.object === 'object') {
 		const structuredResponse = response.object;
 
-		// Handle action type responses
-		if (structuredResponse.type === 'action') {
+		// Handle setState type responses
+		if (structuredResponse.type === 'setState') {
 			// Execute the custom setter with provided parameters
 			state.executeCustomSetter(
 				structuredResponse.stateKey,
@@ -10571,19 +10779,19 @@ handleLLMResult: (response: LLMResponse) => {
 };
 ```
 
-> **Note**: This default handling can be customized using [Custom Response Processing](/agent-backend-connection/custom-response-processing#action-type). You can also customize how action completion is displayed with [Custom Message Rendering](/chat/custom-message-rendering#action-type).
+> **Note**: This default handling can be customized using [Custom Response Processing](/agent-backend-connection/custom-response-processing#setstate-type). You can also customize how setState completion is displayed with [Custom Message Rendering](/chat/custom-message-rendering#setstate-type).
 
 ## Structured Response Types
 
 Cedar supports different types of structured responses:
 
-### Action Type
+### SetState Type
 
 Execute a custom setter on registered state:
 
 ```json
 {
-	"type": "action",
+	"type": "setState",
 	"stateKey": "nodes",
 	"setterKey": "addNode",
 	"args": [
@@ -10594,7 +10802,7 @@ Execute a custom setter on registered state:
 }
 ```
 
-> **Learn More**: See the complete [Action Response Processing](/agent-backend-connection/custom-response-processing#action-type) documentation and [Action Message Rendering](/chat/custom-message-rendering#action-type) guide for detailed information about customizing action handling and display.
+> **Learn More**: See the complete [SetState Response Processing](/agent-backend-connection/custom-response-processing#setstate-type) documentation and [SetState Message Rendering](/chat/custom-message-rendering#setstate-type) guide for detailed information about customizing setState handling and display.
 
 ### Message Type
 
@@ -10666,18 +10874,16 @@ customSetters: {
 }
 ```
 
-### 2. Include Parameter Descriptions
+### 2. Use Descriptive Schema Fields
 
-Help your agent understand what parameters to provide:
+Help your agent understand what parameters to provide using Zod's describe method:
 
 ```tsx
-parameters: [
-	{
-		name: 'priority',
-		type: 'string',
-		description: 'Priority level: low, medium, high, or critical',
-	},
-];
+schema: z.object({
+	priority: z
+		.enum(['low', 'medium', 'high', 'critical'])
+		.describe('Priority level: low, medium, high, or critical'),
+});
 ```
 
 ### 3. Handle Errors Gracefully
@@ -10724,13 +10930,13 @@ For complex workflows, you can chain multiple actions:
   "type": "multi-action",
   "actions": [
     {
-      "type": "action",
+      "type": "setState",
       "stateKey": "nodes",
       "setterKey": "addNode",
       "args": [/* node 1 */]
     },
     {
-      "type": "action",
+      "type": "setState",
       "stateKey": "edges",
       "setterKey": "connectNodes",
       "args": ["node1", "node2"]
@@ -10772,28 +10978,42 @@ The setter and state schemas are included in top-level `setters` and `schemas` f
 			"name": "addNode",
 			"stateKey": "nodes",
 			"description": "Add a new node to the roadmap",
-			"parameters": [
-				{
-					"name": "node",
-					"type": "Node<FeatureNodeData>",
-					"description": "The node to add"
-				}
-			],
 			"schema": {
-				// Zod schema converted to JSON Schema format
+				"type": "object",
+				"properties": {
+					"node": {
+						"type": "object",
+						"properties": {
+							"data": {
+								"type": "object",
+								"properties": {
+									"title": { "type": "string" },
+									"description": { "type": "string" },
+									"status": {
+										"type": "string",
+										"enum": ["done", "planned", "backlog", "in progress"]
+									},
+									"nodeType": { "type": "string", "default": "feature" }
+								}
+							}
+						}
+					}
+				}
 			}
 		},
 		"removeNode": {
 			"name": "removeNode",
 			"stateKey": "nodes",
 			"description": "Remove a node from the roadmap",
-			"parameters": [
-				{
-					"name": "id",
-					"type": "string",
-					"description": "The ID of the node to remove"
+			"schema": {
+				"type": "object",
+				"properties": {
+					"id": {
+						"type": "string",
+						"description": "The ID of the node to remove"
+					}
 				}
-			]
+			}
 		}
 	}
 }
@@ -10801,7 +11021,7 @@ The setter and state schemas are included in top-level `setters` and `schemas` f
 
 ### Zod Schema Integration
 
-If your custom setters include a `schema` field with a Zod schema, Cedar will automatically convert it to JSON Schema format using `zod-to-json-schema` and include it in the setter information. This provides your agent with precise type information for generating valid parameters.
+Custom setters use Zod schemas to define parameter validation and provide rich type information to your agent. Cedar automatically converts Zod schemas to JSON Schema format using `zod-to-json-schema` and includes them in the context sent to your agent.
 
 ```tsx
 // In your useRegisterState hook call
@@ -10812,21 +11032,26 @@ customSetters: {
     schema: z.object({
       node: z.object({
         data: z.object({
-          title: z.string(),
-          description: z.string(),
-          status: z.enum(['done', 'planned', 'backlog', 'in progress']),
-          nodeType: z.literal('feature').default('feature')
+          title: z.string().describe('Feature title'),
+          description: z.string().describe('Detailed feature description'),
+          status: z.enum(['done', 'planned', 'backlog', 'in progress']).describe('Current development status'),
+          nodeType: z.literal('feature').default('feature').describe('Type of node')
         })
       })
     }),
     execute: (currentNodes, node) => {
-      // Implementation
+      // Implementation with full type safety
     }
   }
 }
 ```
 
-This automatic schema distribution ensures your agent always has up-to-date information about available actions and their requirements, enabling more accurate and reliable action execution.
+This schema-based approach provides several benefits:
+
+* **Type Safety**: Runtime validation of parameters
+* **Rich Documentation**: Descriptive field information for agents
+* **Automatic JSON Schema**: Converted format perfect for LLM understanding
+* **Consistent API**: Single source of truth for parameter definitions
 
 ## Next Steps
 
@@ -10844,7 +11069,7 @@ Cedar allows your agent to understand what is happening in your application, and
 
 In other words, it allows your agent to read and write to the local react state.
 
-To understand how we internally execute and render actions on your state (and how to override default behavior and rendering for state changes), read [Action Response Processing](/agent-backend-connection/custom-response-processing#action-type) and [Action Message Rendering](/chat/custom-message-rendering#action-type).
+To understand how we internally execute and render actions on your state (and how to override default behavior and rendering for state changes), read [SetState Response Processing](/agent-backend-connection/custom-response-processing#setstate-type) and [SetState Message Rendering](/chat/custom-message-rendering#setstate-type).
 
 ## useRegisterState Hook
 
@@ -10914,7 +11139,7 @@ Register your existing React state with Cedar using the `useRegisterState` hook:
   interface Setter<T, Args extends unknown[] = unknown[]> {
   	name: string;
   	description: string;
-  	parameters?: SetterParameter[];
+  	schema?: ZodSchema;
   	execute: (state: T, ...args: Args) => void;
   }
 
@@ -11079,7 +11304,7 @@ Execute custom setter functions programmatically using the Cedar store:
   ```
 </CodeGroup>
 
-> **Agent Actions**: Custom setters can be automatically invoked by your agent through structured responses. Learn more about [Action Response Processing](/agent-backend-connection/custom-response-processing#action-type) and [Action Message Rendering](/chat/custom-message-rendering#action-type) to see how agents can execute these setters and display the results.
+> **Agent Actions**: Custom setters can be automatically invoked by your agent through structured responses. Learn more about [SetState Response Processing](/agent-backend-connection/custom-response-processing#setstate-type) and [SetState Message Rendering](/chat/custom-message-rendering#setstate-type) to see how agents can execute these setters and display the results.
 
 ## getCedarState
 
@@ -11291,7 +11516,7 @@ Content-Type: audio/mpeg
   "transcription": "Show me the user dashboard",
   "text": "I'll show you the user dashboard",
   "object": {
-    "type": "action",
+    "type": "setState",
     "stateKey": "ui",
     "setterKey": "navigateTo",
     "args": ["/dashboard"]
@@ -12658,7 +12883,7 @@ Your endpoint can return different types of responses:
 		"totalTokens": 150
 	},
 	"object": {
-		"type": "action",
+		"type": "setState",
 		"stateKey": "myState",
 		"setterKey": "updateValue",
 		"args": ["new value"]
@@ -12752,7 +12977,7 @@ Cedar OS provides a unified `handleLLMVoice` function that processes voice respo
 
 Cedar OS supports structured responses that can trigger actions in your application:
 
-### Action Response
+### SetState Response
 
 To execute a state change:
 
@@ -12760,7 +12985,7 @@ To execute a state change:
 {
 	"text": "I've updated the value for you.",
 	"object": {
-		"type": "action",
+		"type": "setState",
 		"stateKey": "myCustomState",
 		"setterKey": "setValue",
 		"args": [42]

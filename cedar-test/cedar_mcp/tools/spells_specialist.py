@@ -17,13 +17,13 @@ class SpellsSpecialistTool:
     # Core spells-related search terms for documentation
     SPELLS_SEARCH_TERMS = {
         "core_concepts": ["spell", "spells", "useSpell", "spell architecture", "spell system", "magic", "interactions"],
-        "components": ["QuestioningSpell", "RadialMenu", "RadialMenuItem", "TooltipMenuSpell", "SpellProvider", "useSpell hook"],
-        "activation": ["activation conditions", "ActivationMode", "Hotkey", "MouseEvent", "SelectionEvent", "gesture", "trigger"],
+        "components": ["QuestioningSpell", "RadialMenu", "RadialMenuItem", "TooltipMenuSpell", "TooltipMenu", "SpellProvider", "useSpell hook"],
+        "activation": ["activation conditions", "ActivationMode", "Hotkey", "MouseEvent", "SelectionEvent", "gesture", "trigger", "preventDefaultEvents"],
         "modes": ["TOGGLE", "HOLD", "TRIGGER", "activation mode", "spell lifecycle"],
-        "events": ["keyboard events", "mouse events", "text selection", "right click", "hotkeys", "shortcuts"],
-        "features": ["radial menu", "context menu", "command palette", "interactive cursor", "tooltip menu", "questioning cursor", "visual feedback"],
-        "lifecycle": ["onActivate", "onDeactivate", "activate", "deactivate", "toggle", "isActive"],
-        "integration": ["useCedarStore", "sendMessage", "AI integration", "state access", "Cedar store"]
+        "events": ["keyboard events", "mouse events", "text selection", "right click", "hotkeys", "shortcuts", "ignoreInputElements"],
+        "features": ["radial menu", "context menu", "command palette", "interactive cursor", "tooltip menu", "questioning cursor", "visual feedback", "data-question"],
+        "lifecycle": ["onActivate", "onDeactivate", "activate", "deactivate", "toggle", "isActive", "programmatic control"],
+        "integration": ["useCedarStore", "sendMessage", "AI integration", "state access", "Cedar store", "src/components/cedar-os"]
     }
     
     # High-level guidance categories
@@ -310,23 +310,23 @@ class SpellsSpecialistTool:
         query_lower = query.lower()
         
         if "radial" in query_lower or ("menu" in query_lower and "tooltip" not in query_lower):
-            return "RadialMenu creates circular menus activated by gestures. Use useSpell hook with HOLD mode for best UX. Components auto-position to stay on screen."
+            return "RadialMenu creates circular menus activated by gestures. Use useSpell hook with HOLD mode for best UX. Components auto-position to stay on screen. Found in src/components/cedar-os/."
         elif "questioning" in query_lower or "question" in query_lower or "data-question" in query_lower:
-            return "QuestioningSpell transforms cursor into interactive exploration tool. Press 'Q' to activate, hover over elements with data-question attributes to reveal hidden information. Perfect for educational interfaces and contextual help."
+            return "QuestioningSpell transforms cursor into interactive exploration tool. Press 'Q' to activate, hover over elements with data-question attributes to reveal hidden information. Perfect for educational interfaces and contextual help. Component in src/components/cedar-os/."
         elif "tooltip" in query_lower or "text selection" in query_lower or "selected text" in query_lower:
-            return "TooltipMenuSpell creates contextual menu that appears when text is selected. Supports immediate actions or spawning floating inputs for AI interactions. Perfect for text editing and annotation workflows."
+            return "TooltipMenuSpell/TooltipMenu creates contextual menu that appears when text is selected. Supports immediate actions or spawning floating inputs for AI interactions. Perfect for text editing and annotation workflows. Component in src/components/cedar-os/inputs/."
         elif "activation" in query_lower or "trigger" in query_lower:
-            return "Spells support keyboard (Hotkey), mouse (MouseEvent), and selection (SelectionEvent) triggers. Use ActivationMode to control lifecycle: TOGGLE, HOLD, or TRIGGER."
+            return "Spells support keyboard (Hotkey), mouse (MouseEvent), and selection (SelectionEvent) triggers. Use ActivationMode to control lifecycle: TOGGLE, HOLD, or TRIGGER. Set preventDefaultEvents: true for browser shortcuts."
         elif "custom" in query_lower or "create" in query_lower:
-            return "Create custom spells with useSpell hook. Define unique ID, activation conditions, and lifecycle callbacks. Components receive isActive state."
+            return "Create custom spells with useSpell hook. Define unique ID, activation conditions, and lifecycle callbacks. Components receive isActive state. Import existing spell components from src/components/cedar-os/."
         elif "not working" in query_lower or "error" in query_lower:
-            return "Check spell ID uniqueness, verify activation conditions syntax, ensure preventDefaultEvents for browser shortcuts, and check ignoreInputElements setting."
+            return "Check spell ID uniqueness, verify activation conditions syntax, ensure preventDefaultEvents for browser shortcuts, check ignoreInputElements setting, and verify components are imported from correct paths."
         elif focus == "components":
-            return "Cedar provides QuestioningSpell for interactive tooltips, RadialMenu for gesture-based menus, and TooltipMenuSpell for text selection actions. All use useSpell hook internally."
+            return "Cedar provides QuestioningSpell for interactive tooltips, RadialMenu for gesture-based menus, and TooltipMenu for text selection actions. All components are in src/components/cedar-os/ and use useSpell hook internally."
         elif focus == "lifecycle":
-            return "Spells have three states: inactive, activating, and active. Use onActivate/onDeactivate callbacks and isActive state for UI updates."
+            return "Spells have three states: inactive, activating, and active. Use onActivate/onDeactivate callbacks and isActive state for UI updates. Access trigger data in callbacks."
         else:
-            return "Cedar spells enable gesture-based interactions, radial menus, questioning cursors, and text selection menus. Use useSpell hook to create custom magical interactions."
+            return "Cedar spells enable gesture-based interactions, radial menus, questioning cursors, and text selection menus. Use useSpell hook to create custom magical interactions. All spell components are pre-built in src/components/cedar-os/."
     
     def _suggest_related_topics(self, query: str, focus: str) -> List[str]:
         """Suggest related topics to explore"""

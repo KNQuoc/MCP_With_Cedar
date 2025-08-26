@@ -57,6 +57,9 @@ BLOCKED_PACKAGES = [
     "cedar-os-components",
     "@cedar-os/core",
     "@cedar-os/components",
+    "@cedar-os/react",
+    "@cedar-os/voice",
+    "@cedar-os/spells",
     # These packages trigger intelligent analysis rather than hard blocking
 ]
 
@@ -99,8 +102,8 @@ IMPLEMENTATION_RULES = """
 ALL Cedar components are ALREADY INSTALLED in: src/components/cedar-os/
 
 EVERY Cedar component you need is ALREADY THERE:
-• ALL chat components → in chatComponents/ folder
-• ALL input components → in inputs/ folder  
+• ALL chat components → in chatComponents/ folder (FloatingCedarChat, SidePanelChat, etc.)
+• ALL input components → in inputs/ folder (TooltipMenu, ChatInput, VoiceButton, etc.)
 • ALL message components → in chatMessages/ folder
 • ALL UI components → in ui/ folder
 • ALL containers → in containers/ folder
@@ -108,6 +111,8 @@ EVERY Cedar component you need is ALREADY THERE:
 • ALL ornaments → in ornaments/ folder
 • ALL structural components → in structural/ folder
 • ALL diffs → in diffs/ folder
+• ALL voice components → VoiceIndicator, VoiceSettings, etc.
+• ALL spell components → RadialMenu, QuestioningSpell, etc.
 
 DO NOT CREATE NEW COMPONENTS - THEY ALREADY EXIST!
 Just SEARCH in src/components/cedar-os/ and you WILL find what you need!
@@ -128,6 +133,9 @@ WHAT "INTEGRATE" MEANS:
 ⚠️ FILES YOU MUST NEVER CREATE (they already exist):
 • tooltip-menu-spell.tsx → TooltipMenu.tsx EXISTS in inputs/ folder!
 • floating-chat-spell.tsx → FloatingCedarChat.tsx EXISTS in chatComponents/ folder!
+• voice-button.tsx → VoiceButton EXISTS in inputs/ folder!
+• radial-menu.tsx → RadialMenu EXISTS in spells/ or ui/ folder!
+• questioning-spell.tsx → QuestioningSpell EXISTS in components!
 • ANY spell component → The base component ALREADY EXISTS
 • ANY Cedar component → It's ALREADY in src/components/cedar-os/
 
@@ -139,7 +147,10 @@ If yes → The component exists, you just haven't found it yet
 IMPORT VERIFICATION:
 Before ANY import statement:
 • searchDocs("import [ComponentName] from cedar-os")
-• Verify the exact package: @cedar-os/react vs @cedar-os/core vs cedar-os
+• Verify the exact import path: @/components/cedar-os/[subfolder]/[Component]
+• Use local component imports, not package imports: '@/components/cedar-os/inputs/TooltipMenu'
+• For hooks and utilities: 'cedar-os' package (useCedarStore, useTypedAgentConnection, etc.)
+• For provider setup: CedarCopilot from 'cedar-os'
 
 NEVER:
 • Guess component names or props
@@ -206,9 +217,12 @@ GROUNDING_CONFIG = {
         "Cedar Voice Components and Implementation",
         "Cedar Chat and Copilot Integration",
         "Cedar Spells (AI Actions) Configuration",
-        "Mastra Backend and Agent Setup",
-        "State Management with useCedarStore",
+        "Mastra Backend and Agent Setup with Voice",
+        "State Management with useCedarStore and useTypedAgentConnection",
+        "AI SDK and Multiple Provider Configuration",
         "Component Architecture and Best Practices",
+        "Agent Input Context and Mention Systems",
+        "Structured Responses and callLLMStructured",
         "Troubleshooting and Performance Optimization"
     ],
     "knowledge_verification": "ALWAYS use searchDocs, voiceSpecialist, or other tools to verify information before responding",

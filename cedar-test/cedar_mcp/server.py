@@ -56,10 +56,12 @@ class CedarModularMCPServer:
     """🎯 CEDAR-OS EXPERT CONSULTANT - Your Intelligent Cedar Implementation Guide
     
     I am your adaptive Cedar-OS expert with comprehensive knowledge of:
-    • Voice Components & Real-time Audio Processing
-    • Chat Integration & Copilot Configuration  
-    • Spells (AI Actions) & State Management
-    • Mastra Backend & Agent Architecture
+    • Voice Components & Real-time Audio Processing (VoiceIndicator, VoiceButton, etc.)
+    • Chat Integration & Copilot Configuration (CedarCopilot, AI SDK, Multiple Providers)
+    • Spells (AI Actions) & State Management (RadialMenu, QuestioningSpell, TooltipMenu)
+    • Mastra Backend & Agent Architecture (Voice Integration, Workflows, Tools)
+    • Agent Input Context & Mention Systems (useSubscribeStateToInputContext)
+    • Structured Responses & TypeScript Integration (callLLMStructured, useTypedAgentConnection)
     • Performance Optimization & Best Practices
     
     ⚠️ CRITICAL RULE: ALWAYS SEARCH DOCUMENTATION BEFORE ANSWERING!

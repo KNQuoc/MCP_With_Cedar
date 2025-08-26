@@ -41,15 +41,21 @@ class SearchDocsTool:
         
         # Common implementation patterns to enhance
         implementation_patterns = {
-            "floating chat": "ChatInput ChatMessage floating position fixed implementation",
-            "chat component": "ChatInput ChatMessage useCedarStore implementation example",
-            "voice button": "VoiceButton VoiceIndicator voice implementation props",
-            "import": "import from cedar-os @cedar-os/react @cedar-os/core",
+            "floating chat": "ChatInput ChatMessage floating position fixed implementation FloatingCedarChat",
+            "chat component": "ChatInput ChatMessage useCedarStore implementation example CedarCopilot",
+            "voice button": "VoiceButton VoiceIndicator voice implementation props VoiceSettings",
+            "import": "import from cedar-os components src/components/cedar-os",
             "props": "interface props TypeScript type parameters",
             "hook": "useCedarStore useTypedAgentConnection hook example",
-            "provider": "CedarCopilot provider wrapper configuration",
-            "setup": "CedarCopilot initial configuration llmProvider",
-            "example": "complete working example implementation code"
+            "provider": "CedarCopilot provider wrapper configuration AI SDK OpenAI Anthropic Mastra",
+            "setup": "CedarCopilot initial configuration llmProvider plant-seed",
+            "example": "complete working example implementation code",
+            "ai sdk": "AI SDK provider openai anthropic google mistral groq xai",
+            "mastra": "Mastra agent workflow tool memory voice integration",
+            "typed connection": "useTypedAgentConnection callLLM streamLLM callLLMStructured",
+            "structured response": "callLLMStructured schema zod validation object",
+            "streaming": "streamLLM stream chat/stream endpoint",
+            "api routes": "chat/execute-function chat/init chat/stream voice-execute"
         }
         
         # Enhance query if it matches patterns
@@ -75,6 +81,11 @@ class SearchDocsTool:
         # Auto-detect doc type based on query keywords
         if doc_type == "auto":
             doc_type = self._detect_doc_type(enhanced_query)
+            
+        # Log the detection for debugging
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.debug(f"Query: '{query}' -> Enhanced: '{enhanced_query}' -> Doc type: {doc_type}")
         
         # Select the appropriate index
         if doc_type == "mastra" and self.mastra_docs_index:
@@ -105,8 +116,9 @@ class SearchDocsTool:
                 # Don't include prompt in simplified mode
                 simplified_output = {
                     "results": [],
-                    "note": f"not in {doc_name} docs",
-                    "doc_type": doc_type
+                    "note": f"not in {doc_name} docs - try different search terms or check the other documentation type",
+                    "doc_type": doc_type,
+                    "suggestion": "Try searching in both Cedar and Mastra docs, or use more specific component/feature names"
                 }
                 return [TextContent(type="text", text=json.dumps(simplified_output, indent=2))]
             else:
@@ -114,8 +126,9 @@ class SearchDocsTool:
                 full_payload = {
                     "prompt": prompt,
                     "results": [],
-                    "note": f"not in {doc_name} docs",
-                    "doc_type": doc_type
+                    "note": f"not in {doc_name} docs - try different search terms or check the other documentation type",
+                    "doc_type": doc_type,
+                    "suggestion": "Try searching in both Cedar and Mastra docs, or use more specific component/feature names"
                 }
                 formatted = format_tool_output(full_payload, keep_fields=["results", "note", "doc_type"])
                 return [TextContent(type="text", text=json.dumps(formatted, indent=2))]
@@ -163,14 +176,19 @@ class SearchDocsTool:
         mastra_keywords = [
             "mastra", "agent", "workflow", "tool", "memory", "mcp", 
             "jwt", "auth", "runtime", "context", "di", "dependency injection",
-            "libsql", "postgres", "semantic recall", "working memory"
+            "libsql", "postgres", "semantic recall", "working memory",
+            "composite voice", "openai voice", "playai voice", "agent voice",
+            "transcription", "speak", "listen", "audio stream", "voice provider"
         ]
         
         # Cedar-specific keywords
         cedar_keywords = [
             "cedar", "voice", "chat", "copilot", "mention", "floating",
             "chatinput", "voiceindicator", "voicebutton", "voicesettings",
-            "agentic state", "spell", "ui", "frontend", "react", "component"
+            "agentic state", "spell", "ui", "frontend", "react", "component",
+            "ai sdk", "plant-seed", "add-sapling", "usecedrarstore", "typed connection",
+            "structured response", "streaming", "api routes", "baseurl", "chatpath",
+            "radial menu", "questioning spell", "tooltip menu", "activation mode"
         ]
         
         # Count keyword matches

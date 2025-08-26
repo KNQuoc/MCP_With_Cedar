@@ -16,12 +16,12 @@ class ContextSpecialistTool:
     
     # Core context-related search terms for documentation
     CONTEXT_SEARCH_TERMS = {
-        "hooks": ["useSubscribeStateToInputContext", "useStateBasedMentionProvider", "useCedarState", "useRegisterState", "getAgentInputContext", "clearAgentInputContext"],
-        "mentions": ["mention", "@mention", "mention provider", "trigger", "labelField", "searchFields", "renderMenuItem", "renderContextBadge"],
-        "state": ["subscribed state", "state subscription", "mapFn", "transform", "context entries", "state changes", "application state"],
-        "context": ["agent input context", "context data", "contextual information", "additional context", "context stringification"],
-        "configuration": ["icon", "color", "order", "priority", "showInChat", "description", "metadata"],
-        "integration": ["AI agent", "context flow", "agent response", "context payload", "context size", "Cedar Store"]
+        "hooks": ["useSubscribeStateToInputContext", "useStateBasedMentionProvider", "useCedarStore", "useRegisterState", "getAgentInputContext", "clearAgentInputContext", "useTypedAgentConnection"],
+        "mentions": ["mention", "@mention", "mention provider", "trigger", "labelField", "searchFields", "renderMenuItem", "renderContextBadge", "agentic state"],
+        "state": ["subscribed state", "state subscription", "mapFn", "transform", "context entries", "state changes", "application state", "setState", "state manipulation"],
+        "context": ["agent input context", "context data", "contextual information", "additional context", "context stringification", "prompt context"],
+        "configuration": ["icon", "color", "order", "priority", "showInChat", "description", "metadata", "BaseParams", "systemPrompt"],
+        "integration": ["AI agent", "context flow", "agent response", "context payload", "context size", "Cedar Store", "LLMResponse", "structured response"]
     }
     
     # High-level guidance categories

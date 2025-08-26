@@ -33,8 +33,10 @@ class MastraSpecialistTool:
         query: str = arguments.get("query", "")
         limit: int = int(arguments.get("limit", 5))
         
-        prompt = self._build_prompt(query)
-        results = await self.mastra_docs_index.search(query, limit=limit)
+        # Enhance query with Mastra-specific terms
+        enhanced_query = self._enhance_mastra_query(query)
+        prompt = self._build_prompt(enhanced_query)
+        results = await self.mastra_docs_index.search(enhanced_query, limit=limit, use_semantic=True)
         
         # If no results found, return helpful message
         if not results:
@@ -45,7 +47,8 @@ class MastraSpecialistTool:
                 # Don't include prompt in simplified mode
                 simplified_output = {
                     "results": [],
-                    "note": "No matching Mastra documentation found"
+                    "note": "No matching Mastra documentation found - try different search terms like 'agent', 'workflow', 'voice', 'memory', or 'tool'",
+                    "suggestions": ["Mastra agent setup", "voice integration", "workflow configuration", "memory management", "tool creation"]
                 }
                 return [TextContent(type="text", text=json.dumps(simplified_output, indent=2))]
             else:
@@ -53,7 +56,8 @@ class MastraSpecialistTool:
                 full_payload = {
                     "prompt": prompt,
                     "results": [],
-                    "note": "No matching Mastra documentation found"
+                    "note": "No matching Mastra documentation found - try different search terms like 'agent', 'workflow', 'voice', 'memory', or 'tool'",
+                    "suggestions": ["Mastra agent setup", "voice integration", "workflow configuration", "memory management", "tool creation"]
                 }
                 formatted = format_tool_output(full_payload, keep_fields=["results", "note"])
                 return [TextContent(type="text", text=json.dumps(formatted, indent=2))]
@@ -89,11 +93,40 @@ class MastraSpecialistTool:
         formatted = format_tool_output(full_payload, keep_fields=["results"])
         return [TextContent(type="text", text=json.dumps(formatted, indent=2))]
 
+    def _enhance_mastra_query(self, query: str) -> str:
+        """Enhance queries to find Mastra implementation details better."""
+        query_lower = query.lower()
+        
+        # Common Mastra implementation patterns to enhance
+        mastra_patterns = {
+            "agent": "Agent new Agent model instructions voice tools workflow",
+            "voice": "OpenAIVoice PlayAIVoice CompositeVoice speak listen audio stream transcription",
+            "workflow": "workflow step node execution context memory tools",
+            "tool": "tool function call parameter description schema validation",
+            "memory": "memory semantic recall working memory context storage retrieval",
+            "authentication": "jwt auth token user session login middleware",
+            "setup": "Mastra installation configuration environment setup initialization",
+            "api": "API endpoint route handler middleware request response",
+            "database": "libsql postgres connection query schema migration",
+            "integration": "MCP integration provider configuration connection setup"
+        }
+        
+        # Enhance query if it matches patterns
+        for pattern, enhancement in mastra_patterns.items():
+            if pattern in query_lower:
+                return f"{query} {enhancement}"
+        
+        # Add general Mastra context if not present
+        if "mastra" not in query_lower:
+            query += " mastra framework backend"
+            
+        return query
+
     @staticmethod
     def _build_prompt(query: str) -> str:
         return (
             f"Search the Mastra backend documentation for information about: '{query}'. "
-            "Return relevant sections about agents, workflows, tools, memory, MCP integration, "
-            "authentication, or other Mastra backend features. "
+            "Return relevant sections about agents, workflows, tools, memory, voice integration, MCP integration, "
+            "authentication, database configuration, or other Mastra backend features. "
             "Include code examples and implementation details when available."
         )
