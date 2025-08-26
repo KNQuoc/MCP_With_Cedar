@@ -287,24 +287,15 @@ class MCPWebServer:
     async def jsonrpc_handler(self, request):
         """JSON-RPC handler for Cursor MCP integration."""
         try:
-            # Handle GET requests (likely a health check or capabilities query)
+            # Handle GET requests (health check only - initialization must be via POST)
             if request.method == 'GET':
-                logger.info("JSON-RPC GET request received")
-                # Return a notification-style message (no id required for notifications)
-                return web.json_response({
-                    "jsonrpc": "2.0",
-                    "method": "server/hello",
-                    "params": {
-                        "protocolVersion": "0.1.0",
-                        "capabilities": {
-                            "tools": {}
-                        },
-                        "serverInfo": {
-                            "name": "cedar-mcp",
-                            "version": "0.3.0"
-                        }
-                    }
-                })
+                logger.info("JSON-RPC GET request received - health check")
+                # Simple health check response - MCP init happens via POST
+                return web.Response(
+                    status=200,
+                    text='OK',
+                    content_type='text/plain'
+                )
             
             body = await request.read()
             logger.info(f"JSON-RPC POST received: {body[:200] if body else 'empty'}...")
@@ -326,13 +317,19 @@ class MCPWebServer:
             
             # Handle different MCP message types
             if method == 'initialize':
+                # Extract client info
+                params = data.get('params', {})
+                client_protocol = params.get('protocolVersion', '2024-11-05')
+                logger.info(f"Client requested protocol version: {client_protocol}")
+                
                 response = web.json_response({
                     "jsonrpc": "2.0",
                     "id": data.get('id', 1),
                     "result": {
-                        "protocolVersion": "0.1.0",
+                        "protocolVersion": "2024-11-05",  # Use standard MCP protocol version
                         "capabilities": {
-                            "tools": {}
+                            "tools": {},
+                            "resources": {}
                         },
                         "serverInfo": {
                             "name": "cedar-mcp",
@@ -340,8 +337,22 @@ class MCPWebServer:
                         }
                     }
                 })
-                logger.info("Initialize response sent")
+                logger.info(f"Initialize response sent with protocol version 2024-11-05")
                 return response
+            
+            elif method == 'initialized':
+                # Client confirms initialization complete - this is a notification, no response needed
+                logger.info("Client sent initialized notification - handshake complete")
+                return web.Response(status=204)  # No content response for notifications
+            
+            elif method == 'ping':
+                # Respond to ping requests
+                logger.info("Ping request received")
+                return web.json_response({
+                    "jsonrpc": "2.0",
+                    "id": data.get('id', 1),
+                    "result": {}
+                })
             
             elif method == 'tools/list':
                 logger.info("Processing tools/list request")
