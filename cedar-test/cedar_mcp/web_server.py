@@ -291,8 +291,10 @@ class MCPWebServer:
                     "result": {
                         "protocolVersion": "0.1.0",
                         "capabilities": {
-                            "tools": True,
-                            "resources": True
+                            "tools": {
+                                "listChanged": False
+                            },
+                            "resources": {}
                         },
                         "serverInfo": {
                             "name": "cedar-mcp",
@@ -311,8 +313,10 @@ class MCPWebServer:
                     "result": {
                         "protocolVersion": "0.1.0",
                         "capabilities": {
-                            "tools": True,
-                            "resources": True
+                            "tools": {
+                                "listChanged": False
+                            },
+                            "resources": {}
                         },
                         "serverInfo": {
                             "name": "cedar-mcp",
@@ -483,9 +487,11 @@ class MCPWebServer:
                     "result": {
                         "protocolVersion": "0.1.0",
                         "capabilities": {
-                            "tools": True,
-                            "resources": False,
-                            "prompts": False
+                            "tools": {
+                                "listChanged": False
+                            },
+                            "resources": {},
+                            "prompts": {}
                         },
                         "serverInfo": {
                             "name": "cedar-mcp",
