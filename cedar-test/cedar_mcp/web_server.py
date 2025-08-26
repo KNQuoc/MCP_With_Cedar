@@ -35,9 +35,9 @@ class MCPWebServer:
         self.app.router.add_post('/tool', self.handle_tool_call)
         self.app.router.add_get('/tools', self.list_tools)
         self.app.router.add_get('/ws', self.websocket_handler)
-        # SSE endpoints disabled to prevent Cursor confusion - return 404 to force JSON-RPC
-        self.app.router.add_get('/sse', self.sse_not_available)
-        self.app.router.add_post('/sse', self.sse_not_available)
+        # SSE endpoints for Cursor integration
+        self.app.router.add_get('/sse', self.sse_handler)
+        self.app.router.add_post('/sse', self.sse_handler)
         # OAuth discovery endpoints (indicate no auth required)
         self.app.router.add_get('/.well-known/oauth-protected-resource', self.oauth_discovery)
         self.app.router.add_get('/.well-known/oauth-protected-resource/sse', self.oauth_discovery)
@@ -290,19 +290,16 @@ class MCPWebServer:
             # Handle GET requests (likely a health check or capabilities query)
             if request.method == 'GET':
                 logger.info("JSON-RPC GET request received")
-                # Return proper JSON-RPC response with id
+                # For GET requests, don't return a JSON-RPC response
+                # Just return server capabilities as plain JSON
                 return web.json_response({
-                    "jsonrpc": "2.0",
-                    "id": None,
-                    "result": {
-                        "protocolVersion": "0.1.0",
-                        "capabilities": {
-                            "tools": {}
-                        },
-                        "serverInfo": {
-                            "name": "cedar-mcp",
-                            "version": "0.3.0"
-                        }
+                    "protocolVersion": "0.1.0",
+                    "capabilities": {
+                        "tools": {}
+                    },
+                    "serverInfo": {
+                        "name": "cedar-mcp",
+                        "version": "0.3.0"
                     }
                 })
             
@@ -440,72 +437,37 @@ class MCPWebServer:
             })
     
     async def sse_handler(self, request):
-        """SSE handler for Cursor MCP integration - simplified for compatibility."""
+        """SSE handler for Cursor MCP integration."""
         if request.method == 'POST':
             # Handle MCP messages sent via POST to SSE endpoint
             return await self._handle_sse_post_message(request)
         
-        # For GET requests, Cursor might expect JSON responses instead of streaming
-        # Let's try responding with server capabilities directly
+        # For GET requests, always return SSE format
         if request.method == 'GET':
-            # Check if this looks like an MCP initialization request
-            if 'accept' in request.headers and 'text/event-stream' in request.headers.get('accept', ''):
-                # Client explicitly wants SSE, provide minimal SSE response
-                response = StreamResponse()
-                response.headers['Content-Type'] = 'text/event-stream'
-                response.headers['Cache-Control'] = 'no-cache'
-                response.headers['Connection'] = 'keep-alive'
-                response.headers['Access-Control-Allow-Origin'] = '*'
-                response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
-                response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
-                
-                await response.prepare(request)
-                
-                # Send server info immediately
-                server_info = {
-                    "jsonrpc": "2.0",
-                    "method": "server/capabilities",
-                    "params": {
-                        "protocolVersion": "0.1.0",
-                        "capabilities": {
-                            "tools": {
-                                "listChanged": False
-                            }
-                        },
-                        "serverInfo": {
-                            "name": "cedar-mcp",
-                            "version": "0.3.0"
-                        }
-                    }
-                }
-                
-                await self._send_sse_event(response, server_info)
-                
-                # Keep minimal connection alive
-                try:
-                    await asyncio.sleep(1)
+            logger.info("SSE GET request received")
+            # Always provide SSE response for GET
+            response = StreamResponse()
+            response.headers['Content-Type'] = 'text/event-stream'
+            response.headers['Cache-Control'] = 'no-cache'
+            response.headers['Connection'] = 'keep-alive'
+            response.headers['Access-Control-Allow-Origin'] = '*'
+            response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
+            response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+            
+            await response.prepare(request)
+            
+            # Send initial connection event
+            await response.write(b": SSE connection established\n\n")
+            
+            # Keep connection alive and wait for POST messages
+            try:
+                while True:
+                    await asyncio.sleep(30)
                     await response.write(b": keepalive\n\n")
-                except:
-                    pass
-                
-                return response
-            else:
-                # Return JSON response for non-SSE requests
-                return web.json_response({
-                    "jsonrpc": "2.0",
-                    "result": {
-                        "protocolVersion": "0.1.0",
-                        "capabilities": {
-                            "tools": {
-                                "listChanged": False
-                            }
-                        },
-                        "serverInfo": {
-                            "name": "cedar-mcp",
-                            "version": "0.3.0"
-                        }
-                    }
-                })
+            except Exception as e:
+                logger.info(f"SSE connection closed: {e}")
+            
+            return response
         
         return web.json_response({"error": "Method not allowed"}, status=405)
     
