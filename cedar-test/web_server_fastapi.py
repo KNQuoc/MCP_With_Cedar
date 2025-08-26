@@ -116,6 +116,21 @@ async def health():
     """Alternative health check endpoint."""
     return {"status": "ok"}
 
+@app.options("/mcp")
+@app.options("/jsonrpc")
+@app.options("/sse")
+async def handle_options():
+    """Handle OPTIONS requests for CORS preflight."""
+    return Response(
+        status_code=204,
+        headers={
+            "Access-Control-Allow-Origin": "*",
+            "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type, Accept, Mcp-Session-Id",
+            "Access-Control-Max-Age": "3600"
+        }
+    )
+
 @app.post("/mcp")
 @app.post("/jsonrpc")
 async def handle_jsonrpc(request: Request):
@@ -284,9 +299,20 @@ async def handle_jsonrpc(request: Request):
 @app.get("/mcp")
 @app.get("/jsonrpc")
 async def handle_get():
-    """Handle GET requests - health check only."""
-    logger.info("GET request received")
-    return JSONResponse(content={})
+    """Handle GET requests - return a notification for health check."""
+    logger.info("GET request received - returning server ready notification")
+    # Return a valid JSON-RPC notification (no id field)
+    return JSONResponse(content={
+        "jsonrpc": "2.0",
+        "method": "server/ready",
+        "params": {
+            "status": "ready",
+            "serverInfo": {
+                "name": "cedar-mcp",
+                "version": "0.4.0"
+            }
+        }
+    })
 
 @app.get("/sse")
 async def handle_sse():
@@ -294,13 +320,17 @@ async def handle_sse():
     logger.info("SSE connection requested")
     
     async def generate():
-        # Send initial connection message
-        yield "data: {\"type\": \"connected\"}\n\n"
+        # Send SSE comment to establish connection
+        yield ": SSE connection established\n\n"
         
-        # Keep connection alive
-        while True:
-            await asyncio.sleep(30)
-            yield ": keepalive\n\n"
+        # Keep connection alive with periodic keepalives
+        try:
+            while True:
+                await asyncio.sleep(30)
+                yield ": keepalive\n\n"
+        except asyncio.CancelledError:
+            logger.info("SSE connection cancelled")
+            raise
     
     return StreamingResponse(
         generate(),
@@ -308,7 +338,9 @@ async def handle_sse():
         headers={
             "Cache-Control": "no-cache",
             "Connection": "keep-alive",
-            "X-Accel-Buffering": "no"  # Disable proxy buffering
+            "Access-Control-Allow-Origin": "*",
+            "X-Accel-Buffering": "no",  # Disable proxy buffering
+            "X-Content-Type-Options": "nosniff"
         }
     )
 
