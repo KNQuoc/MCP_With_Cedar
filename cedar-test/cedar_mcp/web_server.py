@@ -283,6 +283,24 @@ class MCPWebServer:
     async def jsonrpc_handler(self, request):
         """JSON-RPC handler for Cursor MCP integration."""
         try:
+            # Handle GET requests (likely a health check or capabilities query)
+            if request.method == 'GET':
+                # Return server info for GET requests
+                return web.json_response({
+                    "jsonrpc": "2.0",
+                    "result": {
+                        "protocolVersion": "0.1.0",
+                        "capabilities": {
+                            "tools": True,
+                            "resources": True
+                        },
+                        "serverInfo": {
+                            "name": "cedar-mcp",
+                            "version": "0.3.0"
+                        }
+                    }
+                })
+            
             data = await request.json()
             
             # Handle different MCP message types
@@ -386,7 +404,7 @@ class MCPWebServer:
             logger.error(f"JSON-RPC handling error: {e}")
             return web.json_response({
                 "jsonrpc": "2.0",
-                "id": data.get('id', 1),
+                "id": 1,  # Default ID since data might not be defined
                 "error": {
                     "code": -32603,
                     "message": str(e)
