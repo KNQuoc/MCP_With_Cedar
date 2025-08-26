@@ -290,16 +290,19 @@ class MCPWebServer:
             # Handle GET requests (likely a health check or capabilities query)
             if request.method == 'GET':
                 logger.info("JSON-RPC GET request received")
-                # For GET requests, don't return a JSON-RPC response
-                # Just return server capabilities as plain JSON
+                # Return a notification-style message (no id required for notifications)
                 return web.json_response({
-                    "protocolVersion": "0.1.0",
-                    "capabilities": {
-                        "tools": {}
-                    },
-                    "serverInfo": {
-                        "name": "cedar-mcp",
-                        "version": "0.3.0"
+                    "jsonrpc": "2.0",
+                    "method": "server/hello",
+                    "params": {
+                        "protocolVersion": "0.1.0",
+                        "capabilities": {
+                            "tools": {}
+                        },
+                        "serverInfo": {
+                            "name": "cedar-mcp",
+                            "version": "0.3.0"
+                        }
                     }
                 })
             
@@ -438,13 +441,24 @@ class MCPWebServer:
     
     async def sse_handler(self, request):
         """SSE handler for Cursor MCP integration."""
+        # Handle OPTIONS for CORS preflight
+        if request.method == 'OPTIONS':
+            return web.Response(
+                headers={
+                    'Access-Control-Allow-Origin': '*',
+                    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+                    'Access-Control-Allow-Headers': 'Content-Type, Accept',
+                    'Access-Control-Max-Age': '3600',
+                }
+            )
+        
         if request.method == 'POST':
             # Handle MCP messages sent via POST to SSE endpoint
             return await self._handle_sse_post_message(request)
         
         # For GET requests, always return SSE format
         if request.method == 'GET':
-            logger.info("SSE GET request received")
+            logger.info(f"SSE GET request received, headers: {dict(request.headers)}")
             # Always provide SSE response for GET
             response = StreamResponse()
             response.headers['Content-Type'] = 'text/event-stream'
@@ -452,7 +466,8 @@ class MCPWebServer:
             response.headers['Connection'] = 'keep-alive'
             response.headers['Access-Control-Allow-Origin'] = '*'
             response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
-            response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+            response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Accept'
+            response.headers['X-Content-Type-Options'] = 'nosniff'
             
             await response.prepare(request)
             
