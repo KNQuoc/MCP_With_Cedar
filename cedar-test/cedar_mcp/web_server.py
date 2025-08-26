@@ -35,9 +35,9 @@ class MCPWebServer:
         self.app.router.add_post('/tool', self.handle_tool_call)
         self.app.router.add_get('/tools', self.list_tools)
         self.app.router.add_get('/ws', self.websocket_handler)
-        # SSE endpoints for Claude Desktop
-        self.app.router.add_get('/sse', self.sse_handler)
-        self.app.router.add_post('/sse', self.sse_handler)  # Claude may use POST
+        # SSE endpoints disabled to prevent Cursor confusion - return 404 to force JSON-RPC
+        self.app.router.add_get('/sse', self.sse_not_available)
+        self.app.router.add_post('/sse', self.sse_not_available)
         # OAuth discovery endpoints (indicate no auth required)
         self.app.router.add_get('/.well-known/oauth-protected-resource', self.oauth_discovery)
         self.app.router.add_get('/.well-known/oauth-protected-resource/sse', self.oauth_discovery)
@@ -50,9 +50,9 @@ class MCPWebServer:
         # JSON-RPC endpoint for Cursor
         self.app.router.add_post('/jsonrpc', self.jsonrpc_handler)
         self.app.router.add_get('/jsonrpc', self.jsonrpc_handler)
-        # Make SSE endpoint also handle JSON-RPC directly
-        self.app.router.add_post('/sse/jsonrpc', self.jsonrpc_handler)
-        self.app.router.add_get('/sse/jsonrpc', self.jsonrpc_handler)
+        # SSE/JSON-RPC hybrid endpoints removed to prevent confusion
+        # self.app.router.add_post('/sse/jsonrpc', self.jsonrpc_handler)
+        # self.app.router.add_get('/sse/jsonrpc', self.jsonrpc_handler)
     
     def setup_cors(self):
         """Setup CORS for web clients."""
@@ -490,6 +490,13 @@ class MCPWebServer:
                 })
         
         return web.json_response({"error": "Method not allowed"}, status=405)
+    
+    async def sse_not_available(self, request):
+        """Return 404 for SSE endpoints to force Cursor to use JSON-RPC only."""
+        return web.json_response({
+            "error": "SSE transport not available. Use /jsonrpc endpoint instead.",
+            "jsonrpc_endpoint": "https://mcpwithcedar-production.up.railway.app/jsonrpc"
+        }, status=404)
     
     async def _send_sse_event(self, response, data):
         """Send an SSE event to the client."""
