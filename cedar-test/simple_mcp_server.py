@@ -148,6 +148,37 @@ async def handle_request(request: Request):
                 }
             )
         
+        elif method == "prompts/list":
+            # Return empty prompts list
+            logger.info("Returning prompts list (empty)")
+            return JSONResponse(
+                content={
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "result": {"prompts": []}
+                }
+            )
+        
+        elif method == "resources/list":
+            # Return resources list
+            logger.info("Returning resources list")
+            return JSONResponse(
+                content={
+                    "jsonrpc": "2.0",
+                    "id": request_id,
+                    "result": {
+                        "resources": [
+                            {
+                                "uri": "cedar://docs",
+                                "name": "Cedar Docs",
+                                "description": "Cedar-OS documentation",
+                                "mimeType": "application/json"
+                            }
+                        ]
+                    }
+                }
+            )
+        
         elif method == "tools/list":
             tools = []
             for name, handler in mcp_server.tool_handlers.items():
