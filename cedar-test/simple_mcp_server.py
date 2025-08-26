@@ -247,10 +247,19 @@ async def handle_request(request: Request):
 @app.get("/jsonrpc")
 @app.get("/mcp")
 async def handle_get():
-    """Handle GET requests - return empty object for health check."""
+    """Handle GET requests - return a JSON-RPC notification."""
     logger.info("GET request received")
-    # Return empty JSON object - simplest possible response
-    return {}
+    # Return a valid JSON-RPC notification (no id = notification)
+    return {
+        "jsonrpc": "2.0",
+        "method": "server/hello",
+        "params": {
+            "serverInfo": {
+                "name": "cedar-mcp",
+                "version": "0.5.0"
+            }
+        }
+    }
 
 @app.options("/")
 @app.options("/jsonrpc")
