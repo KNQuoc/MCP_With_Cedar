@@ -297,8 +297,7 @@ class MCPWebServer:
                         "capabilities": {
                             "tools": {
                                 "listChanged": False
-                            },
-                            "resources": {}
+                            }
                         },
                         "serverInfo": {
                             "name": "cedar-mcp",
@@ -311,7 +310,7 @@ class MCPWebServer:
             
             # Handle different MCP message types
             if data.get('method') == 'initialize':
-                return web.json_response({
+                response = web.json_response({
                     "jsonrpc": "2.0",
                     "id": data.get('id', 1),
                     "result": {
@@ -319,8 +318,7 @@ class MCPWebServer:
                         "capabilities": {
                             "tools": {
                                 "listChanged": False
-                            },
-                            "resources": {}
+                            }
                         },
                         "serverInfo": {
                             "name": "cedar-mcp",
@@ -328,6 +326,8 @@ class MCPWebServer:
                         }
                     }
                 })
+                logger.info("MCP initialize request completed successfully")
+                return response
             
             elif data.get('method') == 'tools/list':
                 tools = []
@@ -450,8 +450,7 @@ class MCPWebServer:
                         "capabilities": {
                             "tools": {
                                 "listChanged": False
-                            },
-                            "resources": {}
+                            }
                         },
                         "serverInfo": {
                             "name": "cedar-mcp",
@@ -479,8 +478,7 @@ class MCPWebServer:
                         "capabilities": {
                             "tools": {
                                 "listChanged": False
-                            },
-                            "resources": {}
+                            }
                         },
                         "serverInfo": {
                             "name": "cedar-mcp",
@@ -544,8 +542,7 @@ class MCPWebServer:
                         "capabilities": {
                             "tools": {
                                 "listChanged": False
-                            },
-                            "resources": {}
+                            }
                         },
                         "serverInfo": {
                             "name": "cedar-mcp",
@@ -653,9 +650,7 @@ class MCPWebServer:
                         "capabilities": {
                             "tools": {
                                 "listChanged": False
-                            },
-                            "resources": {},
-                            "prompts": {}
+                            }
                         },
                         "serverInfo": {
                             "name": "cedar-mcp",
