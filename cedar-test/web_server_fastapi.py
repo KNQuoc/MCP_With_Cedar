@@ -103,12 +103,18 @@ app.state.mcp = MCPFastAPIServer()
 @app.get("/")
 async def health_check():
     """Health check endpoint."""
+    # Railway provides RAILWAY_STATIC_URL or we construct it from the app name
+    railway_url = os.getenv("RAILWAY_STATIC_URL") or os.getenv("RAILWAY_URL") or "https://mcpwithcedar-production.up.railway.app"
     return {
         "status": "healthy",
         "service": "Cedar MCP Server (FastAPI)",
         "version": "0.4.0",
         "transports": ["http", "sse"],
-        "url": os.getenv("RAILWAY_URL", "http://localhost:8000")
+        "url": railway_url,
+        "endpoints": {
+            "jsonrpc": f"{railway_url}/jsonrpc",
+            "sse": f"{railway_url}/sse"
+        }
     }
 
 @app.get("/health")
@@ -352,7 +358,8 @@ async def handle_sse_post(request: Request):
 
 def main():
     """Entry point for the FastAPI MCP server."""
-    port = int(os.environ.get("PORT", 8000))
+    # Railway sets PORT environment variable
+    port = int(os.environ.get("PORT", 8080))
     host = "0.0.0.0"
     
     logger.info(f"Starting FastAPI MCP server on {host}:{port}")
