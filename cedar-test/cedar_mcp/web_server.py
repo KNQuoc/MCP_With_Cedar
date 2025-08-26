@@ -50,6 +50,9 @@ class MCPWebServer:
         # JSON-RPC endpoint for Cursor
         self.app.router.add_post('/jsonrpc', self.jsonrpc_handler)
         self.app.router.add_get('/jsonrpc', self.jsonrpc_handler)
+        # Make SSE endpoint also handle JSON-RPC directly
+        self.app.router.add_post('/sse/jsonrpc', self.jsonrpc_handler)
+        self.app.router.add_get('/sse/jsonrpc', self.jsonrpc_handler)
     
     def setup_cors(self):
         """Setup CORS for web clients."""
@@ -105,7 +108,8 @@ class MCPWebServer:
                     # Try (name, args) signature first
                     result = await handler.handle(name, arguments)  # type: ignore
                 except TypeError:
-                    result = await self._call_tool_with_server_logic(tool_name, arguments)  # type: ignore
+                    # Fall back to just arguments if handler doesn't accept name parameter
+                    result = await handler.handle(arguments)  # type: ignore
             else:
                 raise ValueError(f"Handler for {name} lacks handle()")
 
@@ -416,54 +420,76 @@ class MCPWebServer:
             })
     
     async def sse_handler(self, request):
-        """SSE handler for Cursor MCP integration."""
+        """SSE handler for Cursor MCP integration - simplified for compatibility."""
         if request.method == 'POST':
             # Handle MCP messages sent via POST to SSE endpoint
             return await self._handle_sse_post_message(request)
         
-        # Handle GET request for SSE connection establishment
-        response = StreamResponse()
-        response.headers['Content-Type'] = 'text/event-stream'
-        response.headers['Cache-Control'] = 'no-cache'
-        response.headers['Connection'] = 'keep-alive'
-        response.headers['Access-Control-Allow-Origin'] = '*'
-        response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
-        response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
-        response.headers['X-Accel-Buffering'] = 'no'  # Disable nginx buffering
-        
-        await response.prepare(request)
-        
-        # Generate session ID
-        session_id = str(uuid.uuid4())
-        self.sse_sessions[session_id] = {
-            'response': response,
-            'cwd': request.headers.get('X-CWD', os.getcwd()),
-            'initialized': False
-        }
-        
-        logger.info(f"SSE connection established: {session_id}")
-        
-        try:
-            # Send initial MCP server advertisement
-            await self._send_sse_event(response, {
-                "jsonrpc": "2.0",
-                "method": "notifications/initialized",
-                "params": {}
-            })
-            
-            # Keep connection alive and handle any incoming messages
-            await self._handle_sse_stream(request, response, session_id)
+        # For GET requests, Cursor might expect JSON responses instead of streaming
+        # Let's try responding with server capabilities directly
+        if request.method == 'GET':
+            # Check if this looks like an MCP initialization request
+            if 'accept' in request.headers and 'text/event-stream' in request.headers.get('accept', ''):
+                # Client explicitly wants SSE, provide minimal SSE response
+                response = StreamResponse()
+                response.headers['Content-Type'] = 'text/event-stream'
+                response.headers['Cache-Control'] = 'no-cache'
+                response.headers['Connection'] = 'keep-alive'
+                response.headers['Access-Control-Allow-Origin'] = '*'
+                response.headers['Access-Control-Allow-Methods'] = 'GET, POST, OPTIONS'
+                response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
                 
-        except Exception as e:
-            if "Cannot write to closing transport" not in str(e):
-                logger.error(f"SSE error: {e}", exc_info=True)
-        finally:
-            # Clean up session
-            if session_id in self.sse_sessions:
-                del self.sse_sessions[session_id]
-                logger.info(f"SSE connection closed: {session_id}")
+                await response.prepare(request)
+                
+                # Send server info immediately
+                server_info = {
+                    "jsonrpc": "2.0",
+                    "method": "server/capabilities",
+                    "params": {
+                        "protocolVersion": "0.1.0",
+                        "capabilities": {
+                            "tools": {
+                                "listChanged": False
+                            },
+                            "resources": {}
+                        },
+                        "serverInfo": {
+                            "name": "cedar-mcp",
+                            "version": "0.3.0"
+                        }
+                    }
+                }
+                
+                await self._send_sse_event(response, server_info)
+                
+                # Keep minimal connection alive
+                try:
+                    await asyncio.sleep(1)
+                    await response.write(b": keepalive\n\n")
+                except:
+                    pass
+                
+                return response
+            else:
+                # Return JSON response for non-SSE requests
+                return web.json_response({
+                    "jsonrpc": "2.0",
+                    "result": {
+                        "protocolVersion": "0.1.0",
+                        "capabilities": {
+                            "tools": {
+                                "listChanged": False
+                            },
+                            "resources": {}
+                        },
+                        "serverInfo": {
+                            "name": "cedar-mcp",
+                            "version": "0.3.0"
+                        }
+                    }
+                })
         
-        return response
+        return web.json_response({"error": "Method not allowed"}, status=405)
     
     async def _send_sse_event(self, response, data):
         """Send an SSE event to the client."""
