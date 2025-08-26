@@ -137,7 +137,10 @@ class MCPWebServer:
             "version": "0.3.0",
             "transports": ["http", "websocket", "sse"],
             "url": "https://mcpwithcedar-production.up.railway.app",
-            "sse_endpoint": "https://mcpwithcedar-production.up.railway.app/sse"
+            "sse_endpoint": "https://mcpwithcedar-production.up.railway.app/sse",
+            "protocol": "MCP 0.1.0",
+            "authentication": "none",
+            "description": "No authentication required - plug and play MCP server"
         })
     
     async def list_tools(self, request):
@@ -358,19 +361,37 @@ class MCPWebServer:
         response.headers['Cache-Control'] = 'no-cache'
         response.headers['Connection'] = 'keep-alive'
         response.headers['Access-Control-Allow-Origin'] = '*'
+        response.headers['X-Accel-Buffering'] = 'no'  # Disable nginx buffering
         
         await response.prepare(request)
         
         # Generate session ID
         session_id = str(uuid.uuid4())
-        self.sse_sessions[session_id] = response
+        self.sse_sessions[session_id] = {
+            'response': response,
+            'cwd': request.headers.get('X-CWD', os.getcwd())
+        }
+        
+        logger.info(f"SSE connection established: {session_id}, CWD: {self.sse_sessions[session_id]['cwd']}")
         
         try:
-            # Send initial connection event
+            # Send initial capabilities immediately for MCP handshake
             await self._send_sse_event(response, {
-                "type": "connection",
-                "sessionId": session_id,
-                "status": "connected"
+                "jsonrpc": "2.0",
+                "method": "initialized",
+                "params": {
+                    "protocolVersion": "0.1.0",
+                    "capabilities": {
+                        "tools": True,
+                        "resources": False,
+                        "prompts": False,
+                        "sampling": False
+                    },
+                    "serverInfo": {
+                        "name": "cedar-mcp",
+                        "version": "0.3.0"
+                    }
+                }
             })
             
             # Handle incoming messages via query params or POST body
@@ -378,14 +399,15 @@ class MCPWebServer:
                 await self._handle_sse_post(request, response)
             else:
                 # Keep connection alive and handle messages
-                await self._handle_sse_stream(request, response)
+                await self._handle_sse_stream(request, response, session_id)
                 
         except Exception as e:
-            logger.error(f"SSE error: {e}")
+            logger.error(f"SSE error: {e}", exc_info=True)
         finally:
             # Clean up session
             if session_id in self.sse_sessions:
                 del self.sse_sessions[session_id]
+                logger.info(f"SSE connection closed: {session_id}")
         
         return response
     
@@ -397,25 +419,37 @@ class MCPWebServer:
     async def _handle_sse_post(self, request, response):
         """Handle SSE requests via POST (Claude Desktop style)."""
         try:
-            data = await request.json()
+            # Read the raw body for debugging
+            body = await request.read()
+            logger.info(f"SSE POST received: {body[:500]}")  # Log first 500 chars
+            
+            # Try to parse as JSON
+            try:
+                data = json.loads(body) if body else {}
+            except json.JSONDecodeError:
+                logger.warning(f"Failed to parse JSON from SSE POST: {body}")
+                data = {}
             
             # Handle different MCP message types
             if data.get('method') == 'initialize':
-                await self._send_sse_event(response, {
+                result = {
                     "jsonrpc": "2.0",
                     "id": data.get('id', 1),
                     "result": {
                         "protocolVersion": "0.1.0",
                         "capabilities": {
                             "tools": True,
-                            "resources": True
+                            "resources": False,
+                            "prompts": False
                         },
                         "serverInfo": {
                             "name": "cedar-mcp",
                             "version": "0.3.0"
                         }
                     }
-                })
+                }
+                logger.info(f"Sending initialize response: {result}")
+                await self._send_sse_event(response, result)
             
             elif data.get('method') == 'tools/list':
                 tools = []
@@ -497,7 +531,7 @@ class MCPWebServer:
                 }
             })
     
-    async def _handle_sse_stream(self, request, response):
+    async def _handle_sse_stream(self, request, response, session_id):
         """Handle SSE stream for keep-alive and periodic updates."""
         try:
             # Send periodic heartbeat to keep connection alive
@@ -505,10 +539,13 @@ class MCPWebServer:
                 await asyncio.sleep(30)  # Send heartbeat every 30 seconds
                 await self._send_sse_event(response, {
                     "type": "heartbeat",
-                    "timestamp": datetime.now().isoformat()
+                    "timestamp": datetime.now().isoformat(),
+                    "sessionId": session_id
                 })
         except asyncio.CancelledError:
             pass
+        except Exception as e:
+            logger.error(f"SSE stream error: {e}")
     
     def run(self, host='0.0.0.0', port=None):
         """Run the web server."""
