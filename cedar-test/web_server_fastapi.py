@@ -326,17 +326,17 @@ async def handle_sse():
     logger.info("SSE connection requested")
     
     async def generate():
-        # Send SSE comment to establish connection
-        yield ": SSE connection established\n\n"
-        
-        # Keep connection alive with periodic keepalives
         try:
-            while True:
-                await asyncio.sleep(30)
-                yield ": keepalive\n\n"
-        except asyncio.CancelledError:
-            logger.info("SSE connection cancelled")
-            raise
+            # Send SSE comment to establish connection
+            yield ": SSE connection established\n\n"
+            # Send a heartbeat immediately
+            yield ": heartbeat\n\n"
+            
+            # Don't keep the connection open indefinitely - Cursor will reconnect if needed
+            await asyncio.sleep(1)
+            yield ": ready\n\n"
+        except Exception as e:
+            logger.error(f"SSE error: {e}")
     
     return StreamingResponse(
         generate(),
@@ -346,6 +346,7 @@ async def handle_sse():
             "Connection": "keep-alive",
             "Access-Control-Allow-Origin": "*",
             "X-Accel-Buffering": "no",  # Disable proxy buffering
+            "Content-Type": "text/event-stream",  # Explicitly set content-type
             "X-Content-Type-Options": "nosniff"
         }
     )
