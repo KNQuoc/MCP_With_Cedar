@@ -289,15 +289,15 @@ class MCPWebServer:
         try:
             # Handle GET requests (likely a health check or capabilities query)
             if request.method == 'GET':
-                # Return server info for GET requests
+                logger.info("JSON-RPC GET request received")
+                # Return proper JSON-RPC response with id
                 return web.json_response({
                     "jsonrpc": "2.0",
+                    "id": None,
                     "result": {
                         "protocolVersion": "0.1.0",
                         "capabilities": {
-                            "tools": {
-                                "listChanged": False
-                            }
+                            "tools": {}
                         },
                         "serverInfo": {
                             "name": "cedar-mcp",
@@ -306,19 +306,33 @@ class MCPWebServer:
                     }
                 })
             
-            data = await request.json()
+            body = await request.read()
+            logger.info(f"JSON-RPC POST received: {body[:200] if body else 'empty'}...")
+            
+            try:
+                data = json.loads(body) if body else {}
+            except json.JSONDecodeError as e:
+                logger.error(f"JSON parse error: {e}")
+                return web.json_response({
+                    "jsonrpc": "2.0",
+                    "error": {
+                        "code": -32700,
+                        "message": "Parse error"
+                    }
+                })
+            
+            method = data.get('method')
+            logger.info(f"Processing method: {method}, id: {data.get('id')}")
             
             # Handle different MCP message types
-            if data.get('method') == 'initialize':
+            if method == 'initialize':
                 response = web.json_response({
                     "jsonrpc": "2.0",
                     "id": data.get('id', 1),
                     "result": {
                         "protocolVersion": "0.1.0",
                         "capabilities": {
-                            "tools": {
-                                "listChanged": False
-                            }
+                            "tools": {}
                         },
                         "serverInfo": {
                             "name": "cedar-mcp",
@@ -326,10 +340,11 @@ class MCPWebServer:
                         }
                     }
                 })
-                logger.info("MCP initialize request completed successfully")
+                logger.info("Initialize response sent")
                 return response
             
-            elif data.get('method') == 'tools/list':
+            elif method == 'tools/list':
+                logger.info("Processing tools/list request")
                 tools = []
                 for name, handler in self.mcp_server.tool_handlers.items():
                     if hasattr(handler, 'list_tool'):
@@ -340,16 +355,20 @@ class MCPWebServer:
                             "inputSchema": tool.inputSchema
                         })
                 
-                return web.json_response({
+                logger.info(f"Returning {len(tools)} tools")
+                response = {
                     "jsonrpc": "2.0",
                     "id": data.get('id', 1),
                     "result": {"tools": tools}
-                })
+                }
+                logger.info(f"Tools list response: {json.dumps(response)[:500]}...")
+                return web.json_response(response)
             
-            elif data.get('method') == 'tools/call':
+            elif method == 'tools/call':
                 params = data.get('params', {})
                 tool_name = params.get('name')
                 arguments = params.get('arguments', {})
+                logger.info(f"Tool call request: {tool_name}")
                 
                 handler = self.mcp_server.tool_handlers.get(tool_name)
                 if not handler:
@@ -376,7 +395,7 @@ class MCPWebServer:
                     "result": {"content": formatted_result}
                 })
             
-            elif data.get('method') == 'resources/list':
+            elif method == 'resources/list':
                 return web.json_response({
                     "jsonrpc": "2.0",
                     "id": data.get('id', 1),
@@ -399,12 +418,13 @@ class MCPWebServer:
                 })
             
             else:
+                logger.warning(f"Unknown method: {method}")
                 return web.json_response({
                     "jsonrpc": "2.0",
                     "id": data.get('id', 1),
                     "error": {
                         "code": -32601,
-                        "message": f"Method not found: {data.get('method')}"
+                        "message": f"Method not found: {method}"
                     }
                 })
                 
@@ -551,7 +571,7 @@ class MCPWebServer:
                     }
                 })
             
-            elif data.get('method') == 'tools/list':
+            elif method == 'tools/list':
                 logger.info("Processing tools/list request")
                 tools = []
                 for name, handler in self.mcp_server.tool_handlers.items():
@@ -569,7 +589,7 @@ class MCPWebServer:
                     "result": {"tools": tools}
                 })
             
-            elif data.get('method') == 'tools/call':
+            elif method == 'tools/call':
                 logger.info(f"Processing tools/call request for {data.get('params', {}).get('name')}")
                 params = data.get('params', {})
                 tool_name = params.get('name')
@@ -661,7 +681,7 @@ class MCPWebServer:
                 logger.info(f"Sending initialize response: {result}")
                 await self._send_sse_event(response, result)
             
-            elif data.get('method') == 'tools/list':
+            elif method == 'tools/list':
                 tools = []
                 for name, handler in self.mcp_server.tool_handlers.items():
                     if hasattr(handler, 'list_tool'):
@@ -678,10 +698,11 @@ class MCPWebServer:
                     "result": {"tools": tools}
                 })
             
-            elif data.get('method') == 'tools/call':
+            elif method == 'tools/call':
                 params = data.get('params', {})
                 tool_name = params.get('name')
                 arguments = params.get('arguments', {})
+                logger.info(f"Tool call request: {tool_name}")
                 
                 handler = self.mcp_server.tool_handlers.get(tool_name)
                 if not handler:
@@ -708,7 +729,7 @@ class MCPWebServer:
                         "result": {"content": formatted_result}
                     })
             
-            elif data.get('method') == 'resources/list':
+            elif method == 'resources/list':
                 # Return available resources
                 await self._send_sse_event(response, {
                     "jsonrpc": "2.0",
