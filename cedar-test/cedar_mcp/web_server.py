@@ -289,9 +289,15 @@ class MCPWebServer:
         try:
             # Handle GET requests (health check only - initialization must be via POST)
             if request.method == 'GET':
-                logger.info("JSON-RPC GET request received - health check")
-                # Return empty JSON object for health check
-                return web.json_response({})
+                logger.info("JSON-RPC GET request received - sending initialize prompt")
+                # Send a notification prompting the client to initialize
+                return web.json_response({
+                    "jsonrpc": "2.0",
+                    "method": "server/ready",
+                    "params": {
+                        "message": "Server ready. Please send initialize request."
+                    }
+                })
             
             body = await request.read()
             logger.info(f"JSON-RPC POST received: {body[:200] if body else 'empty'}...")
