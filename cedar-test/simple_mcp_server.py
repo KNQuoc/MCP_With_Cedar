@@ -256,31 +256,19 @@ async def handle_request(request: Request):
 @app.get("/jsonrpc")
 @app.get("/mcp")
 async def handle_get(request: Request):
-    """Handle GET requests - return initialize result directly."""
-    logger.info("GET request received - returning initialize result")
+    """Handle GET requests - just acknowledge server is ready."""
+    logger.info("GET request received - health check")
     
-    # Some MCP clients might expect the initialize result from GET
-    # This is non-standard but might work around Cursor's issues
-    session_id = str(uuid.uuid4())
-    
+    # Just return a simple acknowledgment that server is ready
+    # Don't return JSON-RPC format since this is just a health check
     return JSONResponse(
         content={
-            "jsonrpc": "2.0",
-            "id": 1,  # Provide an ID to make it a response
-            "result": {
-                "protocolVersion": "2024-11-05",
-                "capabilities": {
-                    "tools": {},
-                    "resources": {}
-                },
-                "serverInfo": {
-                    "name": "cedar-mcp",
-                    "version": "0.5.0"
-                }
-            }
+            "status": "ready",
+            "server": "cedar-mcp",
+            "version": "0.5.0",
+            "transport": "http"
         },
         headers={
-            "Mcp-Session-Id": session_id,
             "Content-Type": "application/json"
         }
     )
