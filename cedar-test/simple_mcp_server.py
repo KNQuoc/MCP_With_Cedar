@@ -55,9 +55,13 @@ async def root():
 async def handle_request(request: Request):
     """Handle all JSON-RPC requests."""
     try:
-        # Log all requests for debugging
+        # Log all request headers and body for debugging
+        headers = dict(request.headers)
+        logger.info(f"Request headers: {headers}")
+        
         body = await request.body()
-        logger.info(f"Received request: {body[:500] if body else 'empty'}")
+        logger.info(f"Request body size: {len(body) if body else 0} bytes")
+        logger.info(f"Request body: {body.decode('utf-8') if body else 'empty'}")
         
         # Handle empty body
         if not body:
@@ -101,10 +105,15 @@ async def handle_request(request: Request):
             session_id = str(uuid.uuid4())
             sessions[session_id] = {"initialized": True}
             
+            # Try the newer protocol version that Cursor might expect
+            client_version = params.get("protocolVersion", "2024-11-05")
+            
             result = {
-                "protocolVersion": "2024-11-05",
+                "protocolVersion": client_version,  # Echo back client's version
                 "capabilities": {
-                    "tools": {}
+                    "tools": {},
+                    "resources": {},
+                    "prompts": {}
                 },
                 "serverInfo": {
                     "name": "cedar-mcp",
@@ -246,20 +255,35 @@ async def handle_request(request: Request):
 
 @app.get("/jsonrpc")
 @app.get("/mcp")
-async def handle_get():
-    """Handle GET requests - return a JSON-RPC notification."""
-    logger.info("GET request received")
-    # Return a valid JSON-RPC notification (no id = notification)
-    return {
-        "jsonrpc": "2.0",
-        "method": "server/hello",
-        "params": {
-            "serverInfo": {
-                "name": "cedar-mcp",
-                "version": "0.5.0"
+async def handle_get(request: Request):
+    """Handle GET requests - return initialize result directly."""
+    logger.info("GET request received - returning initialize result")
+    
+    # Some MCP clients might expect the initialize result from GET
+    # This is non-standard but might work around Cursor's issues
+    session_id = str(uuid.uuid4())
+    
+    return JSONResponse(
+        content={
+            "jsonrpc": "2.0",
+            "id": 1,  # Provide an ID to make it a response
+            "result": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {
+                    "tools": {},
+                    "resources": {}
+                },
+                "serverInfo": {
+                    "name": "cedar-mcp",
+                    "version": "0.5.0"
+                }
             }
+        },
+        headers={
+            "Mcp-Session-Id": session_id,
+            "Content-Type": "application/json"
         }
-    }
+    )
 
 @app.options("/")
 @app.options("/jsonrpc")
