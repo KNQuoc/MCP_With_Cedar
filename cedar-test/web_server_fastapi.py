@@ -220,6 +220,11 @@ async def handle_jsonrpc(request: Request):
             logger.info("Client confirmed initialization")
             return Response(status_code=204)
         
+        elif method == "notifications/initialized":
+            # Alternative notification endpoint some clients use
+            logger.info("Client sent notifications/initialized")
+            return Response(status_code=204)
+        
         elif method == "ping":
             return JSONResponse(content={
                 "jsonrpc": "2.0",
@@ -289,6 +294,12 @@ async def handle_jsonrpc(request: Request):
             })
         
         else:
+            # Check if this is a notification (starts with notifications/)
+            if method and method.startswith("notifications/"):
+                logger.info(f"Received notification: {method}")
+                # Notifications don't need a response
+                return Response(status_code=204)
+            
             logger.warning(f"Unknown method: {method}")
             return JSONResponse(
                 status_code=400,
