@@ -287,17 +287,11 @@ class MCPWebServer:
     async def jsonrpc_handler(self, request):
         """JSON-RPC handler for Cursor MCP integration."""
         try:
-            # Handle GET requests (health check only - initialization must be via POST)
+            # Handle GET requests - StreamableHTTP doesn't use GET for initialization
             if request.method == 'GET':
-                logger.info("JSON-RPC GET request received - sending initialize prompt")
-                # Send a notification prompting the client to initialize
-                return web.json_response({
-                    "jsonrpc": "2.0",
-                    "method": "server/ready",
-                    "params": {
-                        "message": "Server ready. Please send initialize request."
-                    }
-                })
+                logger.info("JSON-RPC GET request received")
+                # Return 202 Accepted with no body for StreamableHTTP transport
+                return web.Response(status=202)
             
             body = await request.read()
             logger.info(f"JSON-RPC POST received: {body[:200] if body else 'empty'}...")
@@ -324,6 +318,9 @@ class MCPWebServer:
                 client_protocol = params.get('protocolVersion', '2024-11-05')
                 logger.info(f"Client requested protocol version: {client_protocol}")
                 
+                # Generate a session ID for this connection
+                session_id = str(uuid.uuid4())
+                
                 response = web.json_response({
                     "jsonrpc": "2.0",
                     "id": data.get('id', 1),
@@ -338,8 +335,10 @@ class MCPWebServer:
                             "version": "0.3.0"
                         }
                     }
+                }, headers={
+                    'Mcp-Session-Id': session_id  # Include session ID in header
                 })
-                logger.info(f"Initialize response sent with protocol version 2024-11-05")
+                logger.info(f"Initialize response sent with session ID: {session_id}")
                 return response
             
             elif method == 'initialized':
