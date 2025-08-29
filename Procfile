@@ -1,1 +1,1 @@
-web: python cedar-test/web_server_fastapi_sse_fix.py
+web: python cedar-test/web_server_fastapi.py

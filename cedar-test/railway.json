@@ -5,7 +5,7 @@
     "buildCommand": "cd cedar-test && pip install -r requirements.txt"
   },
   "deploy": {
-    "startCommand": "cd cedar-test && python web_server_fastapi_sse_fix.py",
+    "startCommand": "cd cedar-test && python web_server_fastapi.py",
     "restartPolicyType": "ON_FAILURE",
     "restartPolicyMaxRetries": 10
   }
