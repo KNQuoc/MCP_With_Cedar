@@ -2,10 +2,10 @@
   "$schema": "https://railway.app/railway.schema.json",
   "build": {
     "builder": "NIXPACKS",
-    "buildCommand": "cd cedar-test && pip install -r requirements.txt"
+    "watchPatterns": ["cedar-test/**"]
   },
   "deploy": {
-    "startCommand": "cd cedar-test && python web_server_fastapi_sse_fix.py",
+    "startCommand": "python web_server_fastapi_sse_fix.py",
     "restartPolicyType": "ON_FAILURE",
     "restartPolicyMaxRetries": 10
   }
