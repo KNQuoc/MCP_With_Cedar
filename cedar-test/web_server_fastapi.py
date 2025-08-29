@@ -340,32 +340,47 @@ async def handle_get():
     })
 
 @app.get("/sse")
-async def handle_sse(request: Request):
-    """Handle SSE connections - redirect to POST for MCP protocol."""
-    logger.info(f"SSE GET request from {request.headers.get('user-agent', 'unknown')}")
+async def handle_sse():
+    """Handle SSE connections for MCP - Claude Code style."""
+    logger.info("SSE connection requested from Claude Code")
     
-    # MCP SSE protocol expects POST requests, not GET streaming
-    # Return a message indicating this
-    return JSONResponse(
-        content={
-            "error": "MCP SSE protocol requires POST requests",
-            "message": "Send JSON-RPC requests via POST to /sse endpoint"
-        },
-        status_code=405,
+    async def event_generator():
+        """Generate SSE events for Claude Code."""
+        try:
+            # Don't send any initial events - Claude Code will POST to establish connection
+            # Just keep the connection alive
+            while True:
+                await asyncio.sleep(30)
+                # Send keepalive as comment (not data)
+                yield f": keepalive\n\n"
+                
+        except asyncio.CancelledError:
+            logger.info("SSE connection cancelled")
+        except Exception as e:
+            logger.error(f"SSE error: {e}")
+    
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
         headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
             "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Methods": "POST, OPTIONS",
-            "Access-Control-Allow-Headers": "*"
+            "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+            "Access-Control-Allow-Headers": "Content-Type, Accept, Mcp-Session-Id",
+            "X-Accel-Buffering": "no",  # Disable nginx/proxy buffering
         }
     )
 
 @app.post("/sse")
 async def handle_sse_post(request: Request):
-    """Handle MCP over SSE - return SSE-formatted responses."""
+    """Handle SSE POST requests - MCP over SSE for Claude Code."""
+    # Claude Code sends JSON-RPC over POST to SSE endpoint
+    # We process it and return the response as SSE events
     try:
         body = await request.body()
         if not body:
-            # SSE error response
+            # Return SSE formatted error
             return StreamingResponse(
                 iter([f'data: {json.dumps({"jsonrpc": "2.0", "error": {"code": -32600, "message": "Empty request"}})}\n\n']),
                 media_type="text/event-stream",
@@ -376,48 +391,80 @@ async def handle_sse_post(request: Request):
             )
         
         data = json.loads(body)
+        method = data.get("method")
+        params = data.get("params", {})
+        request_id = data.get("id")
         
-        # Use the existing JSON-RPC handler to process the request
-        # This ensures consistency between HTTP and SSE transports
+        logger.info(f"SSE POST: method={method}")
+        
+        # Process the request using the same logic as JSON-RPC
+        if method == "initialize":
+            session_id = str(uuid.uuid4())
+            app.state.mcp.sessions[session_id] = {
+                "initialized": True,
+                "protocol_version": params.get("protocolVersion", "2024-11-05")
+            }
+            
+            response = {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "result": {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {
+                        "tools": {},
+                        "resources": {}
+                    },
+                    "serverInfo": {
+                        "name": "cedar-mcp",
+                        "version": "0.4.0"
+                    }
+                }
+            }
+            
+            # Return as SSE event
+            return StreamingResponse(
+                iter([f'data: {json.dumps(response)}\n\n']),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Access-Control-Allow-Origin": "*",
+                    "Mcp-Session-Id": session_id
+                }
+            )
+        
+        # For other methods, use the existing JSON-RPC handler logic
+        # but return as SSE events
         json_response = await handle_jsonrpc(request)
+        response_body = json.loads(json_response.body)
         
-        # Extract the response body
-        if hasattr(json_response, 'body'):
-            response_data = json_response.body
-            if isinstance(response_data, bytes):
-                response_data = response_data.decode('utf-8')
-            if isinstance(response_data, str):
-                response_data = json.loads(response_data)
-        else:
-            # If it's already a dict/Response object
-            response_data = {"jsonrpc": "2.0", "result": {}}
-        
-        # Return as SSE event stream
         return StreamingResponse(
-            iter([f'data: {json.dumps(response_data)}\n\n']),
+            iter([f'data: {json.dumps(response_body)}\n\n']),
             media_type="text/event-stream",
             headers={
                 "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
                 "Access-Control-Allow-Origin": "*",
-                "Access-Control-Allow-Methods": "POST, OPTIONS",
-                "Access-Control-Allow-Headers": "*",
             }
         )
         
-    except json.JSONDecodeError as e:
-        logger.error(f"SSE POST JSON error: {e}")
-        return StreamingResponse(
-            iter([f'data: {json.dumps({"jsonrpc": "2.0", "error": {"code": -32700, "message": "Parse error"}})}\n\n']),
-            media_type="text/event-stream",
-            headers={"Cache-Control": "no-cache", "Access-Control-Allow-Origin": "*"}
-        )
     except Exception as e:
         logger.error(f"SSE POST error: {e}")
+        error_response = {
+            "jsonrpc": "2.0",
+            "error": {
+                "code": -32603,
+                "message": str(e)
+            }
+        }
+        if "request_id" in locals() and request_id:
+            error_response["id"] = request_id
+            
         return StreamingResponse(
-            iter([f'data: {json.dumps({"jsonrpc": "2.0", "error": {"code": -32603, "message": str(e)}})}\n\n']),
+            iter([f'data: {json.dumps(error_response)}\n\n']),
             media_type="text/event-stream",
-            headers={"Cache-Control": "no-cache", "Access-Control-Allow-Origin": "*"}
+            headers={
+                "Cache-Control": "no-cache",
+                "Access-Control-Allow-Origin": "*",
+            }
         )
 
 def main():
