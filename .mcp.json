@@ -1,6 +1,6 @@
 {
   "mcpServers": {
-    "cedar": {
+    "cedar-local": {
       "type": "stdio",
       "command": "python",
       "args": [
@@ -8,6 +8,10 @@
         "cedar_mcp"
       ],
       "env": {}
+    },
+    "cedar-railway": {
+      "type": "sse",
+      "url": "https://mcpwithcedar-production.up.railway.app/sse"
     }
   }
 }

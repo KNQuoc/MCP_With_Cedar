@@ -340,67 +340,85 @@ async def handle_get():
     })
 
 @app.get("/sse")
-async def handle_sse():
-    """Handle SSE connections for MCP."""
-    logger.info("SSE connection requested")
+async def handle_sse(request: Request):
+    """Handle SSE connections - redirect to POST for MCP protocol."""
+    logger.info(f"SSE GET request from {request.headers.get('user-agent', 'unknown')}")
     
-    async def event_generator():
-        """Generate SSE events."""
-        try:
-            # Send initial connection event
-            yield f": Connected to Cedar MCP Server via SSE\n\n"
-            
-            # Send server capabilities as first event
-            server_info = {
-                "jsonrpc": "2.0",
-                "method": "server/initialized",
-                "params": {
-                    "serverInfo": {
-                        "name": "cedar-mcp",
-                        "version": "0.4.0"
-                    },
-                    "protocolVersion": "2024-11-05"
-                }
-            }
-            yield f"data: {json.dumps(server_info)}\n\n"
-            
-            # Keep connection alive with periodic heartbeats
-            heartbeat_count = 0
-            while heartbeat_count < 10:  # Limit to 10 heartbeats then close
-                await asyncio.sleep(5)
-                yield f": heartbeat {heartbeat_count}\n\n"
-                heartbeat_count += 1
-            
-            # Close after some time to prevent hanging connections
-            yield f": closing connection\n\n"
-            
-        except asyncio.CancelledError:
-            logger.info("SSE connection cancelled")
-            yield f": connection cancelled\n\n"
-        except Exception as e:
-            logger.error(f"SSE error: {e}")
-            error_msg = {"error": str(e)}
-            yield f"data: {json.dumps(error_msg)}\n\n"
-    
-    return StreamingResponse(
-        event_generator(),
-        media_type="text/event-stream",
+    # MCP SSE protocol expects POST requests, not GET streaming
+    # Return a message indicating this
+    return JSONResponse(
+        content={
+            "error": "MCP SSE protocol requires POST requests",
+            "message": "Send JSON-RPC requests via POST to /sse endpoint"
+        },
+        status_code=405,
         headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
             "Access-Control-Allow-Origin": "*",
-            "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-            "Access-Control-Allow-Headers": "Content-Type, Accept",
-            "X-Accel-Buffering": "no",  # Disable nginx/proxy buffering
+            "Access-Control-Allow-Methods": "POST, OPTIONS",
+            "Access-Control-Allow-Headers": "*"
         }
     )
 
 @app.post("/sse")
 async def handle_sse_post(request: Request):
-    """Handle SSE POST requests - MCP over SSE."""
-    # For POST to SSE, treat it the same as JSON-RPC
-    # Cursor might send MCP requests here when using SSE transport
-    return await handle_jsonrpc(request)
+    """Handle MCP over SSE - return SSE-formatted responses."""
+    try:
+        body = await request.body()
+        if not body:
+            # SSE error response
+            return StreamingResponse(
+                iter([f'data: {json.dumps({"jsonrpc": "2.0", "error": {"code": -32600, "message": "Empty request"}})}\n\n']),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Access-Control-Allow-Origin": "*",
+                }
+            )
+        
+        data = json.loads(body)
+        
+        # Use the existing JSON-RPC handler to process the request
+        # This ensures consistency between HTTP and SSE transports
+        json_response = await handle_jsonrpc(request)
+        
+        # Extract the response body
+        if hasattr(json_response, 'body'):
+            response_data = json_response.body
+            if isinstance(response_data, bytes):
+                response_data = response_data.decode('utf-8')
+            if isinstance(response_data, str):
+                response_data = json.loads(response_data)
+        else:
+            # If it's already a dict/Response object
+            response_data = {"jsonrpc": "2.0", "result": {}}
+        
+        # Return as SSE event stream
+        return StreamingResponse(
+            iter([f'data: {json.dumps(response_data)}\n\n']),
+            media_type="text/event-stream",
+            headers={
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Methods": "POST, OPTIONS",
+                "Access-Control-Allow-Headers": "*",
+            }
+        )
+        
+    except json.JSONDecodeError as e:
+        logger.error(f"SSE POST JSON error: {e}")
+        return StreamingResponse(
+            iter([f'data: {json.dumps({"jsonrpc": "2.0", "error": {"code": -32700, "message": "Parse error"}})}\n\n']),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "Access-Control-Allow-Origin": "*"}
+        )
+    except Exception as e:
+        logger.error(f"SSE POST error: {e}")
+        return StreamingResponse(
+            iter([f'data: {json.dumps({"jsonrpc": "2.0", "error": {"code": -32603, "message": str(e)}})}\n\n']),
+            media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "Access-Control-Allow-Origin": "*"}
+        )
 
 def main():
     """Entry point for the FastAPI MCP server."""

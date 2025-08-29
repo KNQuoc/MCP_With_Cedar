@@ -1,0 +1,6 @@
+{
+  "enabledMcpjsonServers": [
+    "cedar-local",
+    "cedar-railway"
+  ]
+}
